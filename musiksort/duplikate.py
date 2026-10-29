@@ -226,23 +226,64 @@ def kopien(con):
     return {lid: wurzel(lid) for lid in list(eltern)}, nur_kopie
 
 
+def familien(con):
+    """Offene Gruppen, die über gemeinsame Dateien zusammenhängen (A~B in einer, B~C in einer anderen).
+
+    Nur sichere Gruppen werden verbunden: ein Zweifelsfall (Edit, Remaster, Live) bleibt allein, sonst
+    würde eine eigene Fassung über die Kette mit aussortiert. Rückgabe: Listen von Gruppen-IDs, sichere zuerst,
+    sonst nach kleinster Gruppen-ID (wie bisher die Reihenfolge der Gruppen).
+    """
+    zeilen = con.execute(f"SELECT g.id, g.sicher, m.lied_id FROM dup_gruppen g JOIN dup_mitglieder m ON m.gruppe_id=g.id "
+                         f"WHERE {OFFENE_GRUPPEN}").fetchall()
+    eltern, sicher = {}, {}
+
+    def wurzel(x):
+        while eltern[x] != x:
+            eltern[x] = eltern[eltern[x]]
+            x = eltern[x]
+        return x
+
+    erste_gruppe = {}  # Lied → erste sichere Gruppe, in der es vorkommt
+    for gid, s_, lid in zeilen:
+        eltern.setdefault(gid, gid)
+        sicher[gid] = bool(s_)
+        if not s_:
+            continue
+        if lid in erste_gruppe:
+            a, b = wurzel(erste_gruppe[lid]), wurzel(gid)
+            if a != b:
+                eltern[max(a, b)] = min(a, b)
+        else:
+            erste_gruppe[lid] = gid
+    teile = {}
+    for gid in eltern:
+        teile.setdefault(wurzel(gid), []).append(gid)
+    return sorted((sorted(t) for t in teile.values()), key=lambda t: (not sicher[t[0]], t[0]))
+
+
 def protokoll(con, aktion, info, wer=None):
     """Jede folgenreiche Entscheidung nachvollziehbar (wer, wann, was)."""
     con.execute("INSERT INTO protokoll(ts, aktion, von, nach) VALUES (?,?,?,?)",
                 (db.jetzt(), aktion, wer, json.dumps(info, ensure_ascii=False)))
 
 
-def entscheiden(con, gruppe_id, status, mitglieder, behalten=None, von="ich", wer=None, grund=None):
+def entscheiden(con, gruppe_id, status, mitglieder, behalten=None, von="ich", wer=None, grund=None, familie=()):
     """Eine offene Gruppe entscheiden: freigegeben (behalten bleibt, Rest wird vorgemerkt) oder verworfen.
 
     Gemeinsam für deine Klicks und die automatischen Stufen; der Aufrufer hält die Transaktion
     (BEGIN IMMEDIATE … commit). Abgelehnt wird alles, was zusammen mit anderen Entscheidungen
-    eine Fassung ganz verlieren könnte.
+    eine Fassung ganz verlieren könnte. familie: Gruppen, die im selben Zug entschieden werden
+    (familie_entscheiden); Überschneidungen mit ihnen sind gewollt und werden nicht abgelehnt.
     """
+    andere = "AND g.id NOT IN (%s)" % ",".join(str(int(x)) for x in familie) if familie else ""
     if status not in ("freigegeben", "verworfen"):
         raise Abgelehnt(400, "Status ungültig")
-    if not con.execute("SELECT 1 FROM dup_gruppen WHERE id=? AND status='offen'", (gruppe_id,)).fetchone():
+    g = con.execute("SELECT sicher FROM dup_gruppen WHERE id=? AND status='offen'", (gruppe_id,)).fetchone()
+    if not g:
         raise Abgelehnt(404, "Gruppe ist schon entschieden oder neu berechnet. Bitte neu laden.")
+    # Ketten über freigegebene Gruppen (A←B←C) nur, wenn beide Gruppen sicher gleich sind; ein Zweifelsfall
+    # (Edit, Remix) darf nie das letzte Glied sein, über das eine Fassung „überlebt“
+    kette = "AND NOT (g.status='freigegeben' AND g.sicher=1)" if g[0] else ""
     drin = con.execute("SELECT m.lied_id, m.behalten, l.status, l.pfad FROM dup_mitglieder m "
                        "JOIN lieder l ON l.id=m.lied_id WHERE m.gruppe_id=?", (gruppe_id,)).fetchall()
     if sorted(m[0] for m in drin) != sorted(mitglieder):
@@ -251,7 +292,7 @@ def entscheiden(con, gruppe_id, status, mitglieder, behalten=None, von="ich", we
         raise Abgelehnt(409, "Eine der Dateien hat sich geändert oder fehlt. Die Gruppe wird neu geprüft.")
     for m in drin:  # schon anderswo zum Löschen vorgemerkt: diese Frage ist erledigt
         if con.execute("SELECT 1 FROM dup_mitglieder x JOIN dup_gruppen g ON g.id=x.gruppe_id WHERE x.lied_id=? "
-                       "AND x.behalten=0 AND g.status='freigegeben' AND g.id!=?", (m[0], gruppe_id)).fetchone():
+                       f"AND x.behalten=0 AND g.status='freigegeben' AND g.id!=? {andere}", (m[0], gruppe_id)).fetchone():
             raise Abgelehnt(409, f"„{m[3].rsplit('/', 1)[-1]}“ ist schon in einer anderen Gruppe zum Löschen "
                                  "vorgemerkt. Bitte neu laden.")
     behalten = behalten if behalten is not None else next(m[0] for m in drin if m[1])
@@ -262,22 +303,92 @@ def entscheiden(con, gruppe_id, status, mitglieder, behalten=None, von="ich", we
             if m[0] == behalten:
                 continue
             if con.execute("SELECT 1 FROM dup_mitglieder x JOIN dup_gruppen g ON g.id=x.gruppe_id WHERE x.lied_id=? "
-                           "AND x.behalten=1 AND g.id!=? AND g.status IN ('offen','freigegeben')",
+                           f"AND x.behalten=1 AND g.id!=? AND g.status IN ('offen','freigegeben') {andere} {kette}",
                            (m[0], gruppe_id)).fetchone():
                 raise Abgelehnt(409, f"„{m[3].rsplit('/', 1)[-1]}“ ist in einer anderen Gruppe die behaltene Datei. "
                                      "Dort zuerst entscheiden oder hier alle behalten.")
         if con.execute("SELECT 1 FROM dup_mitglieder x JOIN dup_gruppen g ON g.id=x.gruppe_id WHERE x.lied_id=? "
-                       "AND x.behalten=0 AND g.status='freigegeben'", (behalten,)).fetchone():
+                       f"AND x.behalten=0 AND g.status='freigegeben' {andere} {kette}", (behalten,)).fetchone():
             raise Abgelehnt(409, "Die behaltene Datei ist in einer anderen Gruppe schon zum Löschen vorgemerkt.")
+    con.execute("SAVEPOINT entscheiden")
     con.execute("UPDATE dup_mitglieder SET behalten=(lied_id=?) WHERE gruppe_id=?", (behalten, gruppe_id))
     con.execute("UPDATE dup_gruppen SET status=?, entschieden_von=? WHERE id=?", (status, von, gruppe_id))
+    if status == "freigegeben" and not all(ueberlebt(con, m[0]) for m in drin):
+        con.execute("ROLLBACK TO entscheiden")
+        con.execute("RELEASE entscheiden")
+        raise Abgelehnt(409, "Damit bliebe von diesem Lied keine Datei übrig. Bitte neu laden.")
+    con.execute("RELEASE entscheiden")
     protokoll(con, ("duplikat_" if von == "ich" else "duplikat_auto_") + status,
               {"gruppe": gruppe_id, "mitglieder": list(mitglieder), "behalten": behalten, "von": von,
                **({"grund": grund} if grund else {})}, wer)
     return behalten
 
 
-def zuruecknehmen(con, gruppe_id, wer=None):
+def ueberlebt(con, lid):
+    """Bleibt von dieser Datei (oder einer, über die sie bei Freigaben ersetzt wird) etwas übrig?
+    Folgt allen Wegen „hier vorgemerkt → behaltene Datei jener Gruppe“; ein Kreis zählt nicht."""
+    gesehen, offen = set(), [lid]
+    while offen:
+        x = offen.pop()
+        if x in gesehen:
+            continue
+        gesehen.add(x)
+        weiter = [r[0] for r in con.execute(
+            "SELECT k.lied_id FROM dup_mitglieder m JOIN dup_gruppen g ON g.id=m.gruppe_id "
+            "JOIN dup_mitglieder k ON k.gruppe_id=g.id AND k.behalten=1 "
+            "WHERE m.lied_id=? AND m.behalten=0 AND g.status='freigegeben'", (x,))]
+        if not weiter:
+            return True   # wird nirgends gelöscht
+        offen += weiter
+    return False
+
+
+def familie_entscheiden(con, gruppen, status, mitglieder, behalten=None, von="ich", wer=None):
+    """Zusammenhängende Gruppen (familien) mit einer Entscheidung: eine Datei behalten, alle anderen vormerken,
+    oder alle behalten. Aufrufer hält die Transaktion.
+
+    Nur sichere Gruppen bilden Familien (familien), jede gelöschte Datei hängt also über sichere Treffer mit der
+    behaltenen zusammen. In jeder Gruppe bleibt die Datei, die der behaltenen am nächsten ist (dort die behaltene
+    selbst); entscheiden prüft zusätzlich, dass am Ende etwas übrig bleibt. Beim Sortierlauf wandern Stern und
+    Bewertung die Kette entlang (papierkorb).
+    """
+    gruppen = sorted({int(g) for g in gruppen})
+    if not gruppen:
+        raise Abgelehnt(400, "keine Gruppen")
+    teil = next((f for f in familien(con) if gruppen[0] in f), None)
+    if teil != gruppen:
+        raise Abgelehnt(409, "Die Gruppen haben sich geändert. Bitte neu laden.")
+    je = {}
+    for gid, lid in con.execute(f"SELECT gruppe_id, lied_id FROM dup_mitglieder WHERE gruppe_id IN "
+                                f"({','.join('?' * len(gruppen))})", gruppen):
+        je.setdefault(gid, set()).add(lid)
+    alle = set().union(*je.values())
+    if alle != set(mitglieder):
+        raise Abgelehnt(409, "Gruppe hat sich geändert. Bitte neu laden.")
+    if status == "verworfen":
+        for gid in gruppen:
+            entscheiden(con, gid, status, sorted(je[gid]), von=von, wer=wer, familie=gruppen)
+        return None
+    if behalten is None or behalten not in alle:
+        raise Abgelehnt(400, "nicht in der Gruppe")
+    # Abstand jeder Datei zur behaltenen (Schritte über gemeinsame Gruppen)
+    abstand, rand = {behalten: 0}, [behalten]
+    while rand:
+        neu = []
+        for lid in rand:
+            for gid in gruppen:
+                if lid in je[gid]:
+                    for x in je[gid] - abstand.keys():
+                        abstand[x] = abstand[lid] + 1
+                        neu.append(x)
+        rand = neu
+    for gid in gruppen:
+        naechste = min(je[gid], key=lambda x: (abstand[x], x))
+        entscheiden(con, gid, status, sorted(je[gid]), behalten=naechste, von=von, wer=wer, familie=gruppen)
+    return behalten
+
+
+def zuruecknehmen(con, gruppe_id, wer=None, familie=()):
     """Entscheidung zurücknehmen (nur solange noch nichts gelöscht wurde).
 
     Steckt ein Mitglied inzwischen in einer anderen offenen Gruppe oder hat sich eine Datei
@@ -291,6 +402,7 @@ def zuruecknehmen(con, gruppe_id, wer=None):
         raise Abgelehnt(404, "Nichts zurückzunehmen")
     ueberschneidung = con.execute(
         "SELECT 1 FROM dup_mitglieder m JOIN dup_gruppen g ON g.id=m.gruppe_id WHERE g.status='offen' "
+        f"AND g.id NOT IN ({','.join(str(int(x)) for x in familie) or '0'}) "
         "AND m.lied_id IN (SELECT lied_id FROM dup_mitglieder WHERE gruppe_id=?)", (gruppe_id,)).fetchone()
     veraendert = con.execute(
         "SELECT 1 FROM dup_mitglieder m JOIN lieder l ON l.id=m.lied_id WHERE m.gruppe_id=? "

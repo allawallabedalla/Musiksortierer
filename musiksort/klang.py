@@ -18,6 +18,8 @@ STILLE_FENSTER = 0.05
 RAND_SEKUNDEN = 30       # so viel wird am Anfang/Ende auf Stille untersucht
 ECHT_AB_HZ = 19500       # echte verlustfreie Aufnahmen reichen meist bis 20–22 kHz
 KANTE_DB = 25.0          # Abfall innerhalb von 500 Hz, ab dem eine Kodierer-Kante vorliegt
+WELLE_PUNKTE = 200       # Balken der Wellenform hinter der Scrub-Leiste
+WELLE_RATE = 2000        # Hz; für die Lautstärke-Hüllkurve reicht das, dekodiert ~0,4 s je Lied
 
 
 def _pcm(pfad, *vor, rate=8000, dauer=None):
@@ -29,6 +31,17 @@ def _pcm(pfad, *vor, rate=8000, dauer=None):
     if r.returncode:
         raise RuntimeError("nicht lesbar: " + r.stderr.decode(errors="replace")[:120])
     return np.frombuffer(r.stdout, np.float32)
+
+
+def wellenform(pfad, punkte=WELLE_PUNKTE):
+    """Lautstärke-Hüllkurve des ganzen Lieds: `punkte` Werte 0–255 (RMS je Abschnitt, lautester = 255)."""
+    a = _pcm(pfad, rate=WELLE_RATE)
+    if a.size < punkte:
+        raise RuntimeError("zu kurz für eine Wellenform")
+    teile = np.array_split(a.astype(np.float64), punkte)
+    rms = np.sqrt(np.array([(t ** 2).mean() for t in teile]))
+    oben = rms.max()
+    return (np.zeros(punkte) if oben <= 0 else np.round(255 * rms / oben)).astype(np.uint8).tobytes()
 
 
 def stille_laenge(a, rate, vom_ende=False):

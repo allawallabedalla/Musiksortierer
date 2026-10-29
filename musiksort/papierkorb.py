@@ -61,6 +61,20 @@ def verschieben(con, lied_id, grund, heute=None):
     return neu
 
 
+def _endgueltig(con, lid):
+    """Wohin eine behaltene Datei am Ende wandert: ist sie in einer anderen freigegebenen Gruppe selbst
+    vorgemerkt (Kette A←B←C), deren behaltene Datei – bis zur letzten, die wirklich bleibt."""
+    gesehen = {lid}
+    while True:
+        r = con.execute("SELECT k.lied_id FROM dup_mitglieder x JOIN dup_gruppen g ON g.id=x.gruppe_id "
+                        "JOIN dup_mitglieder k ON k.gruppe_id=g.id AND k.behalten=1 WHERE x.lied_id=? AND x.behalten=0 "
+                        "AND g.status IN ('freigegeben','erledigt') ORDER BY g.id LIMIT 1", (lid,)).fetchone()
+        if not r or r[0] in gesehen:
+            return lid
+        lid = r[0]
+        gesehen.add(lid)
+
+
 def gruppe_ausfuehren(con, gruppe_id):
     """Freigegebene Duplikatgruppe ausführen: alle nicht behaltenen Dateien in den Papierkorb, Gruppe „erledigt“."""
     g = con.execute("SELECT status FROM dup_gruppen WHERE id=?", (gruppe_id,)).fetchone()
@@ -68,13 +82,13 @@ def gruppe_ausfuehren(con, gruppe_id):
         raise PapierkorbFehler("Gruppe ist nicht freigegeben")
     weg = [r[0] for r in con.execute("SELECT lied_id FROM dup_mitglieder WHERE gruppe_id=? AND behalten=0", (gruppe_id,))]
     # Favorit geht nicht verloren: hatte eine aussortierte Datei den Stern, bekommt ihn die behaltene
-    if weg and con.execute(f"SELECT 1 FROM lieder WHERE stern=1 AND id IN ({','.join('?' * len(weg))})", weg).fetchone():
-        con.execute("UPDATE lieder SET stern=1, stern_ts=? WHERE stern=0 AND id IN "
-                    "(SELECT lied_id FROM dup_mitglieder WHERE gruppe_id=? AND behalten=1)", (db.jetzt(), gruppe_id))
+    # (bei Ketten über mehrere Gruppen: die Datei, die am Ende wirklich bleibt)
+    behalten = [_endgueltig(con, r[0]) for r in con.execute(
+        "SELECT lied_id FROM dup_mitglieder WHERE gruppe_id=? AND behalten=1", (gruppe_id,))]
+    if weg and behalten and con.execute(f"SELECT 1 FROM lieder WHERE stern=1 AND id IN ({','.join('?' * len(weg))})", weg).fetchone():
+        con.execute("UPDATE lieder SET stern=1, stern_ts=? WHERE stern=0 AND id=?", (db.jetzt(), behalten[0]))
     # Bewertung geht nicht verloren: ist die behaltene Datei unbewertet, übernimmt sie die jüngste Bewertung
     # einer aussortierten (Genre + Zusätze); eigene Bewertungen der behaltenen bleiben unangetastet
-    behalten = [r[0] for r in con.execute("SELECT lied_id FROM dup_mitglieder WHERE gruppe_id=? AND behalten=1",
-                                          (gruppe_id,))]
     if weg and behalten and not con.execute("SELECT 1 FROM etiketten WHERE lied_id=?", (behalten[0],)).fetchone():
         quelle = con.execute(f"SELECT lied_id FROM etiketten WHERE haupt=1 AND lied_id IN ({','.join('?' * len(weg))}) "
                              "ORDER BY ts DESC LIMIT 1", weg).fetchone()

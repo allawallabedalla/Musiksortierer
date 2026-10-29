@@ -407,3 +407,83 @@ def test_zurueck_nach_spaeter(umgebung):
     assert con.execute("SELECT COUNT(*) FROM uebersprungen").fetchone()[0] == 1
     client.post("/api/rueckgaengig", json={"rueck_id": rid})
     assert con.execute("SELECT COUNT(*) FROM uebersprungen").fetchone()[0] == 0
+
+
+def test_wellenform_einmal_berechnet(umgebung, monkeypatch):
+    client, con, lid, gid = umgebung
+    from musiksort import klang
+    w = client.get(f"/api/wellenform/{lid}").json()
+    assert len(w) == klang.WELLE_PUNKTE and max(w) == 255 and min(w) > 0  # Sinuston: überall laut
+    # zweiter Abruf kommt aus der DB, ohne neu zu dekodieren
+    monkeypatch.setattr(klang, "wellenform", lambda *a, **k: (_ for _ in ()).throw(AssertionError("neu berechnet")))
+    assert client.get(f"/api/wellenform/{lid}").json() == w
+    assert client.get("/api/wellenform/9999").status_code == 404
+
+
+def _lieder(con, *namen):
+    return [con.execute("INSERT INTO lieder(pfad, status) VALUES (?, 'analysiert')", (n,)).lastrowid for n in namen]
+
+
+def test_verkettete_gruppen_eine_karte_eine_entscheidung(umgebung):
+    """A~B und B~C (aber A, C nicht direkt): eine Karte mit allen dreien, ein Tipp entscheidet beide Gruppen."""
+    client, con, x, gid = umgebung
+    a, b, c = _lieder(con, "a.flac", "b.mp3", "c.mp3")
+    con.execute("UPDATE lieder SET codec='flac', verlustfrei=1 WHERE id=?", (a,))
+    g1, g2 = _gruppe(con, [a, b], a), _gruppe(con, [b, c], b)
+    con.commit()
+    karten = client.get("/api/duplikate").json()
+    assert len(karten) == 1 and karten[0]["gruppen"] == [g1, g2]
+    m = {k["id"]: k for k in karten[0]["mitglieder"]}
+    assert m[a]["empfohlen"] and m[c]["indirekt"] and not m[b]["indirekt"]
+    r = client.post("/api/duplikate-familie", json={"status": "freigegeben", "behalten": a, "mitglieder": [a, b, c],
+                                                    "gruppen": [g1, g2]})
+    assert r.status_code == 200
+    behalten = dict(con.execute("SELECT gruppe_id, lied_id FROM dup_mitglieder WHERE behalten=1").fetchall())
+    assert behalten == {g1: a, g2: b}   # in der zweiten Gruppe bleibt die Datei, die a am nächsten ist
+    assert client.get("/api/duplikate").json() == []
+    # Stern und Bewertung wandern beim Sortierlauf bis zur Datei, die wirklich bleibt
+    from musiksort import papierkorb
+    assert papierkorb._endgueltig(con, b) == a and papierkorb._endgueltig(con, a) == a
+    # gemeinsam zurück: beide wieder offen (nicht „ersetzt“, obwohl sie sich überschneiden)
+    r = client.post("/api/duplikate-familie/zuruecknehmen", json={"gruppen": [g1, g2]})
+    assert r.status_code == 200 and not r.json()["neu_vorgelegt"]
+    assert {s for (s,) in con.execute("SELECT status FROM dup_gruppen WHERE id IN (?,?)", (g1, g2))} == {"offen"}
+
+
+def test_familie_veraltet_abgelehnt(umgebung):
+    client, con, x, gid = umgebung
+    a, b, c = _lieder(con, "a.mp3", "b.mp3", "c.mp3")
+    g1, g2 = _gruppe(con, [a, b], a), _gruppe(con, [b, c], b)
+    con.commit()
+    assert client.post("/api/duplikate-familie", json={"status": "freigegeben", "behalten": a, "mitglieder": [a, b],
+                                                       "gruppen": [g1]}).status_code == 409   # Teil einer Familie
+    assert client.post("/api/duplikate-familie", json={"status": "freigegeben", "behalten": a, "mitglieder": [a, b],
+                                                       "gruppen": [g1, g2]}).status_code == 409  # c fehlt
+    assert con.execute("SELECT COUNT(*) FROM dup_gruppen WHERE status='offen'").fetchone()[0] == 2
+
+
+def test_kette_ueber_freigegebene_sichere_gruppe_erlaubt(umgebung):
+    """Die Meldung „ist in einer anderen Gruppe die behaltene Datei“ kommt bei sicheren Ketten nicht mehr."""
+    client, con, x, gid = umgebung
+    a, b, c = _lieder(con, "a.mp3", "b.mp3", "c.mp3")
+    g2 = _gruppe(con, [b, c], b)
+    con.commit()
+    assert client.post(f"/api/duplikate/{g2}", json={"status": "freigegeben", "mitglieder": [b, c]}).status_code == 200
+    g1 = _gruppe(con, [a, b], a)
+    con.commit()
+    assert client.post(f"/api/duplikate/{g1}", json={"status": "freigegeben", "behalten": a, "mitglieder": [a, b]}).status_code == 200
+
+
+def test_kreis_wuerde_alles_loeschen_abgelehnt(umgebung):
+    """{A,B} behält A; eine zweite sichere Gruppe {A,B}, die B behält, ließe nichts übrig."""
+    client, con, x, gid = umgebung
+    a, b = _lieder(con, "a.mp3", "b.mp3")
+    g1 = _gruppe(con, [a, b], a)
+    con.commit()
+    assert client.post(f"/api/duplikate/{g1}", json={"status": "freigegeben", "mitglieder": [a, b]}).status_code == 200
+    g2 = _gruppe(con, [a, b], b)
+    con.commit()
+    r = client.post(f"/api/duplikate/{g2}", json={"status": "freigegeben", "behalten": b, "mitglieder": [a, b]})
+    assert r.status_code == 409
+    assert con.execute("SELECT status FROM dup_gruppen WHERE id=?", (g2,)).fetchone()[0] == "offen"
+    assert con.execute("SELECT behalten FROM dup_mitglieder WHERE gruppe_id=? AND lied_id=?", (g2, b)).fetchone()[0] == 1

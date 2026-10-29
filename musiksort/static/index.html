@@ -50,6 +50,10 @@ nav i{font-size:20px}
 /* eigene Leiste statt <input type=range>: auf dem iPhone überall tippen und ziehen (nicht nur den kleinen Knopf) */
 .spur{position:relative;height:44px;touch-action:none;cursor:pointer;-webkit-user-select:none;user-select:none}
 .spur::before{content:"";position:absolute;left:0;right:0;top:19px;height:6px;border-radius:3px;background:var(--chip)}
+/* Wellenform hinter der Leiste: blendet ein, sobald sie da ist (Karte wartet nie darauf) */
+.spur .welle{position:absolute;inset:2px 0;width:100%;height:40px;opacity:0;transition:opacity .3s;pointer-events:none}
+.spur .welle.da{opacity:1}
+.spur .welle rect{fill:var(--leise);opacity:.35}
 .spur .gespielt{position:absolute;left:0;top:19px;height:6px;border-radius:3px;background:var(--koralle);width:0}
 .spur .griff{position:absolute;top:11px;width:22px;height:22px;margin-left:-11px;border-radius:50%;background:var(--koralle);left:0;
   box-shadow:0 0 0 3px var(--karte)}
@@ -296,6 +300,7 @@ async function auffuellen() {
     n.vorhergesagt = n.vorhergesagt ?? n.vorschlag[0]?.id ?? null;  // bei Stichproben: das geprüfte Genre (auch Obergenre)
     schlange.push(n);
     if (!n.lied.direkt) fetch(`/api/snippet/${n.lied_id}`).catch(() => {});  // Ausschnitt vorwärmen (nur ohne Direktwiedergabe)
+    else fetch(`/api/wellenform/${n.lied_id}`).catch(() => {});  // Wellenform vorab berechnen lassen
   }
 }
 
@@ -434,7 +439,7 @@ function zeichneLied() {
       <button class="play" id="play" aria-label="Abspielen"><i class="fa-regular fa-circle-play"></i></button>
       ${l.direkt ? `<div class="scrub"><div class="spur" id="scrub" role="slider" tabindex="0" aria-label="Stelle im Lied"
           aria-valuemin="0" aria-valuemax="${Math.max(1, Math.round(l.dauer || 0))}" aria-valuenow="${Math.round(l.snippet_start || 0)}">
-          <div class="gespielt"></div><div class="griff"></div></div><div class="zeit" id="zeit"></div></div>`
+          <svg class="welle" viewBox="0 0 200 40" preserveAspectRatio="none" aria-hidden="true"></svg><div class="gespielt"></div><div class="griff"></div></div><div class="zeit" id="zeit"></div></div>`
         : `<div class="balken"><div id="fort"></div></div>
       <button class="knopf" id="anders"><i class="fa-regular fa-clock"></i>Andere Stelle</button>`}
     </div>
@@ -446,7 +451,7 @@ function zeichneLied() {
       <div>Prozent bei Vorschlägen: zuerst dein Modell (wie sicher es sich ist), dahinter die allgemeine Klang-Erkennung (ein anderer, nicht vergleichbarer Wert).</div>
     </details>`;
   $("#play").onclick = () => { if (!audio.paused && istQuelle()) audio.pause(); else spiele(); };
-  if ($("#scrub")) scrubEinrichten($("#scrub"));
+  if ($("#scrub")) { scrubEinrichten($("#scrub")); welleZeigen(aktuell.lied_id); }
   if ($("#anders")) $("#anders").onclick = () => {
     ausschnitt = ausschnitt % 5 + 1; spiele();  // 5 weitere Ausschnitte, dann wieder von vorn
     $("#anders").innerHTML = `<i class="fa-regular fa-hourglass-half"></i>Lädt`;
@@ -813,6 +818,17 @@ function zeitZeigen(t) {
   sc.setAttribute("aria-valuetext", `${minSek(t)} von ${minSek(max)}`);
   z.textContent = `${minSek(t)} / ${minSek(max)}`;
 }
+async function welleZeigen(lid) {
+  try {
+    const w = await api(`/api/wellenform/${lid}`);
+    const svg = $("#scrub .welle");
+    if (!svg || aktuell?.lied_id !== lid || !w.length) return;  // inzwischen andere Karte
+    const breite = 200 / w.length;
+    svg.innerHTML = w.map((v, i) => { const h = Math.max(1, v / 255 * 40);
+      return `<rect x="${(i * breite).toFixed(2)}" y="${((40 - h) / 2).toFixed(2)}" width="${(breite * 0.7).toFixed(2)}" height="${h.toFixed(2)}"/>`; }).join("");
+    svg.classList.add("da");
+  } catch { /* ohne Wellenform geht es genauso */ }
+}
 function scrubEinrichten(sc) {
   zeitZeigen(+sc.getAttribute("aria-valuenow"));
   const stelle = e => { const r = sc.getBoundingClientRect(); return Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)) * scrubMax(); };
@@ -1076,11 +1092,12 @@ async function dupZeigen() {
   const zeile = (gr, m) => `<div class="dupzeile">
       <button class="knopf" data-hoer="${m.id}" aria-label="${esc(dupName(m.pfad))} anhören"><i class="fa-regular fa-circle-play" style="margin:0"></i></button>
       <div class="duptext"><div class="${m.empfohlen ? "empfohlen" : ""}">${esc(m.pfad)}</div>
-        <div class="unter">${technik(m)}${m.empfohlen ? ` · <b>beste Qualität</b>` : ""}${m.stern ? ` · <i class="fa-regular fa-star" aria-hidden="true"></i> Favorit` : ""}</div></div>
+        <div class="unter">${technik(m)}${m.empfohlen ? ` · <b>beste Qualität</b>` : ""}${m.indirekt ? " · nur über eine andere Datei als gleich erkannt" : ""}${m.stern ? ` · <i class="fa-regular fa-star" aria-hidden="true"></i> Favorit` : ""}</div></div>
       <button class="knopf behalt${m.empfohlen ? " erste" : ""}" data-behalt="${m.id}" data-gruppe-id="${gr.id}"
         aria-label="${esc(dupName(m.pfad))} behalten, die anderen zum Löschen vormerken"><i class="fa-regular fa-circle-check"></i>Diesen behalten</button></div>`;
   // wie viele es insgesamt gibt: gezeigt werden nur die ersten (Audit F-22)
-  const alle = stand?.dup_gruppen ?? g.length;
+  const gezeigt = g.reduce((a, gr) => a + gr.gruppen.length, 0);
+  const alle = stand?.dup_gruppen ?? gezeigt;
   const zuletzt = dupZuletzt.length ? `<div class="karte"><div class="abschnitt">Zuletzt entschieden</div>${dupZuletzt.map(z =>
     `<div class="baumzeile"><div class="name">${esc(z.text)}</div><button class="knopf" data-zurueck="${z.gid}"><i class="fa-regular fa-circle-left"></i>Rückgängig</button></div>`).join("")}</div>` : "";
   // Automatik: kurz zusammengefasst, Einzelheiten hinter dem Aufklapper, alles mit einem Knopf zurücknehmbar
@@ -1093,9 +1110,9 @@ async function dupZeigen() {
       `<div>${esc(STUFE_NAME[k] ?? k)}: ${x.freigegeben ? `${zahl(x.freigegeben)} × beste behalten` : ""}${x.freigegeben && x.verworfen ? ", " : ""}${x.verworfen ? `${zahl(x.verworfen)} × alle behalten` : ""}</div>`).join("")}
       <div>Gelöscht wird erst beim Sortierlauf. Jede automatische Entscheidung steht mit Grund im Protokoll.</div></details></div>` : "";
   $("#duplikate").innerHTML = autoKarte + zuletzt + `<div class="karte unter"><i class="fa-regular fa-circle-question"></i> „Diesen behalten“ merkt die anderen Dateien der Gruppe zum Löschen vor. Gelöscht wird erst beim Sortierlauf, Rückgängig geht jederzeit.
-    ${alle > g.length ? `<div style="margin-top:6px">${g.length} von ${alle} Gruppen. Weitere erscheinen, sobald du diese entscheidest.</div>` : ""}</div>` +
+    ${alle > gezeigt ? `<div style="margin-top:6px">${gezeigt} von ${alle} Gruppen. Weitere erscheinen, sobald du diese entscheidest.</div>` : ""}</div>` +
     (g.length ? g.map(gr => `<div class="karte" data-gruppe="${gr.id}">
-      <div class="grund"><i class="fa-regular ${gr.sicher ? "fa-copy" : "fa-circle-question"}"></i>${gr.sicher ? "Gleiche Aufnahme" : "Edit, Remaster oder Live?"}</div>
+      <div class="grund"><i class="fa-regular ${gr.sicher ? "fa-copy" : "fa-circle-question"}"></i>${gr.sicher ? "Gleiche Aufnahme" : "Edit, Remaster oder Live?"}${gr.gruppen.length > 1 ? ` <span class="unter">· ${gr.gruppen.length} Gruppen hängen zusammen</span>` : ""}</div>
       ${gr.mitglieder.map(m => zeile(gr, m)).join("")}
       <div style="margin-top:10px"><button class="knopf" data-verwerfen="${gr.id}" style="width:100%"><i class="fa-regular fa-folder"></i>Alle behalten</button></div></div>`).join("")
      : '<div class="leer">Keine offenen Duplikate.</div>');
@@ -1112,25 +1129,29 @@ async function dupZeigen() {
     const gr = g.find(x => x.id === +gid);
     const mitglieder = gr.mitglieder.map(m => m.id);
     try {
-      await post(`/api/duplikate/${gid}`, {...koerper, mitglieder});
+      // zusammenhängende Gruppen: eine Entscheidung für alle (der Server prüft, dass nichts ganz verloren geht)
+      if (gr.gruppen.length > 1) await post("/api/duplikate-familie", {...koerper, mitglieder, gruppen: gr.gruppen});
+      else await post(`/api/duplikate/${gid}`, {...koerper, mitglieder});
       const name = dupName((gr.mitglieder.find(m => m.id === koerper.behalten) ?? gr.mitglieder[0]).pfad);
       const andere = gr.mitglieder.length - 1;
       const text = koerper.status === "freigegeben" ? `„${name}“ behalten, ${andere} ${andere === 1 ? "andere Datei" : "andere Dateien"} vorgemerkt` : `„${name}“ und Co.: alle behalten`;
-      dupZuletzt = [{gid: +gid, text}, ...dupZuletzt.filter(z => z.gid !== +gid)].slice(0, 5);
+      dupZuletzt = [{gid: +gid, gruppen: gr.gruppen, text}, ...dupZuletzt.filter(z => z.gid !== +gid)].slice(0, 5);
       melde(koerper.status === "freigegeben" ? `„${name}“ behalten, Rest zum Löschen vorgemerkt.` : "Alle werden behalten.",
-            "Rückgängig", () => dupZuruecknehmen(+gid));
+            "Rückgängig", () => dupZuruecknehmen(+gid, gr.gruppen));
     }
     finally { if (seite === "duplikate") await dupZeigen(); }
     vorhoer.pause();
   });
-  $("#duplikate").querySelectorAll("[data-zurueck]").forEach(b => b.onclick = () => dupZuruecknehmen(+b.dataset.zurueck));
+  $("#duplikate").querySelectorAll("[data-zurueck]").forEach(b => b.onclick = () =>
+    dupZuruecknehmen(+b.dataset.zurueck, dupZuletzt.find(z => z.gid === +b.dataset.zurueck)?.gruppen));
   $("#duplikate").querySelectorAll("[data-verwerfen]").forEach(b => b.onclick = () => entscheiden(b.dataset.verwerfen, {status: "verworfen"}));
   $("#duplikate").querySelectorAll("[data-behalt]").forEach(b => b.onclick = () =>
     entscheiden(b.dataset.gruppeId, {status: "freigegeben", behalten: +b.dataset.behalt}));
 }
 
-const dupZuruecknehmen = gid => einmal("zurueck" + gid, async () => {
-  const r = await post(`/api/duplikate/${gid}/zuruecknehmen`, {});
+const dupZuruecknehmen = (gid, gruppen) => einmal("zurueck" + gid, async () => {
+  const r = gruppen?.length > 1 ? await post("/api/duplikate-familie/zuruecknehmen", {gruppen})
+                                : await post(`/api/duplikate/${gid}/zuruecknehmen`, {});
   dupZuletzt = dupZuletzt.filter(z => z.gid !== gid);
   melde(r?.neu_vorgelegt ? "Zurückgenommen. Die Gruppe kommt bei der nächsten Duplikatsuche neu." : "Zurückgenommen.");
   if (seite === "duplikate") await dupZeigen();

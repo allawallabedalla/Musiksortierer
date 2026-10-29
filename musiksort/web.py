@@ -503,6 +503,31 @@ def api_snippet(lid: int, request: Request, ausschnitt: int = Query(0, ge=0, le=
                         headers={"X-Start": f"{start:.1f}", "Cache-Control": "private, max-age=86400"})
 
 
+@app.get("/api/wellenform/{lid}")
+def api_wellenform(lid: int):
+    """Hüllkurve fürs Bild hinter der Scrub-Leiste; einmal berechnet, dann aus der DB."""
+    c = con()
+    try:
+        r = c.execute("SELECT wellenform FROM lieder WHERE id=?", (lid,)).fetchone()
+        if r and r[0]:
+            daten = r[0]
+        else:
+            pfad = _quelle(c, lid)[0]
+            with _sperre_fuer(f"welle_{lid}"):
+                r = c.execute("SELECT wellenform FROM lieder WHERE id=?", (lid,)).fetchone()
+                daten = r[0] if r and r[0] else None
+                if not daten:
+                    try:
+                        daten = klang.wellenform(pfad)
+                    except (RuntimeError, subprocess.TimeoutExpired):
+                        raise HTTPException(422, "Wellenform ließ sich nicht berechnen")
+                    with c:
+                        c.execute("UPDATE lieder SET wellenform=? WHERE id=?", (daten, lid))
+    finally:
+        c.close()
+    return JSONResponse(list(daten), headers={"Cache-Control": "private, max-age=86400"})
+
+
 @app.get("/api/datei/{lid}")
 def api_datei(lid: int):
     c = con()
@@ -659,23 +684,29 @@ def api_fortschritt():
 
 @app.get("/api/duplikate")
 def api_duplikate(grenze: int = Query(50, ge=1, le=200)):
+    """Offene Gruppen; zusammenhängende (A~B, B~C) als eine Karte mit allen Dateien (gruppen > 1)."""
     c = con()
     c.execute("BEGIN")
     erg = []
-    for g in c.execute(f"SELECT g.id, g.sicher FROM dup_gruppen g WHERE {duplikate.OFFENE_GRUPPEN} "
-                       "ORDER BY g.sicher DESC, g.id LIMIT ?", (grenze,)).fetchall():
+    for teil in duplikate.familien(c)[:grenze]:
+        platz = ",".join("?" * len(teil))
         ms = c.execute("SELECT l.id, l.pfad, l.codec, l.bitrate, l.verlustfrei, l.bittiefe, l.samplerate, l.dauer, "
-                       "l.interpret, l.titel, l.album, l.grenzfrequenz, l.kante, l.stern, m.behalten, m.abweichung FROM dup_mitglieder m "
-                       "JOIN lieder l ON l.id=m.lied_id WHERE m.gruppe_id=?", (g[0],)).fetchall()
+                       "l.interpret, l.titel, l.album, l.grenzfrequenz, l.kante, l.stern, max(m.behalten) behalten, "
+                       f"max(m.abweichung) abweichung, group_concat(m.gruppe_id) gruppen FROM dup_mitglieder m "
+                       f"JOIN lieder l ON l.id=m.lied_id WHERE m.gruppe_id IN ({platz}) GROUP BY l.id", teil).fetchall()
         if not ms:
             continue
-        best = max(ms, key=duplikate.qualitaet)["id"]
+        best = max(ms, key=duplikate.qualitaet)
+        mit_best = set(best["gruppen"].split(","))
         mitglieder = [{k: r[k] for k in ("id", "pfad", "codec", "bitrate", "verlustfrei", "bittiefe", "samplerate",
                                           "dauer", "behalten", "abweichung", "stern")}
-                      | {"empfohlen": r["id"] == best, "aus_mp3": klang.falsche_verlustfrei(r)}
+                      | {"empfohlen": r["id"] == best["id"], "aus_mp3": klang.falsche_verlustfrei(r),
+                         # nur über eine dritte Datei als gleich erkannt (Kette)
+                         "indirekt": not (set(r["gruppen"].split(",")) & mit_best)}
                       for r in ms]
-        mitglieder.sort(key=lambda m: not m["empfohlen"])
-        erg.append({"id": g[0], "sicher": bool(g[1]), "mitglieder": mitglieder})
+        mitglieder.sort(key=lambda m: (not m["empfohlen"], m["indirekt"]))
+        sicher = c.execute(f"SELECT min(sicher) FROM dup_gruppen WHERE id IN ({platz})", teil).fetchone()[0]
+        erg.append({"id": teil[0], "gruppen": teil, "sicher": bool(sicher), "mitglieder": mitglieder})
     return erg
 
 
@@ -696,6 +727,43 @@ def api_dup_entscheiden(gid: int, e: DupEntscheidung, request: Request):
         raise HTTPException(a.code, a.text)
     c.commit()
     return {"ok": True, "behalten": behalten}
+
+
+class FamilienEntscheidung(DupEntscheidung):
+    gruppen: list[int] = Field(min_length=1, max_length=200)
+
+
+@app.post("/api/duplikate-familie")
+def api_dup_familie(e: FamilienEntscheidung, request: Request):
+    """Zusammenhängende Gruppen mit einem Tipp: eine Datei behalten (alle anderen vormerken) oder alle behalten."""
+    c = con()
+    c.execute("BEGIN IMMEDIATE")
+    try:
+        behalten = duplikate.familie_entscheiden(c, e.gruppen, e.status, e.mitglieder, e.behalten, von="ich",
+                                                 wer=_wer(request))
+    except duplikate.Abgelehnt as a:
+        c.rollback()
+        raise HTTPException(a.code, a.text)
+    c.commit()
+    return {"ok": True, "behalten": behalten}
+
+
+class FamilienRuecknahme(BaseModel):
+    gruppen: list[int] = Field(min_length=1, max_length=200)
+
+
+@app.post("/api/duplikate-familie/zuruecknehmen")
+def api_dup_familie_zuruecknehmen(e: FamilienRuecknahme, request: Request):
+    """Gemeinsam Entschiedenes gemeinsam zurück: die Gruppen überschneiden sich untereinander, das ist gewollt."""
+    c = con()
+    c.execute("BEGIN IMMEDIATE")
+    try:
+        neu = [duplikate.zuruecknehmen(c, g, wer=_wer(request), familie=e.gruppen) for g in e.gruppen]
+    except duplikate.Abgelehnt as a:
+        c.rollback()
+        raise HTTPException(a.code, a.text)
+    c.commit()
+    return {"neu_vorgelegt": "ersetzt" in neu}
 
 
 @app.post("/api/duplikate/{gid}/zuruecknehmen")
