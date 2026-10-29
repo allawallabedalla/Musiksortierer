@@ -84,6 +84,16 @@ Die Units drosseln sich selbst (`musiksort.slice`: höchstens 2 Kerne, 3,5 GB) u
 Jobs per `taskset -c 4,5` an zwei Kerne – auf Rechnern mit weniger Kernen dort anpassen.
 Danach läuft die App unter `http://<rechner>:8097`.
 
+**Startmodell** (optional, für eine neue Sammlung): `startmodell/` enthält gut 1.400 bewertete Beispiele
+des Herausgebers – nur Klang-Steckbrief, Länge, Gesangssprache und Genre, keine Dateinamen, Interpreten oder
+Titel – und ein daraus trainiertes Modell. Geladen geben sie vom ersten Lied an Genre-Vorschläge (mit halbem
+Gewicht neben deinen eigenen Bewertungen). Selbst sortiert wird trotzdem erst, was deine eigenen Bewertungen und
+Stichproben belegen. Die Genres kommen dabei mit (lassen sich in der App umbenennen, verschieben, zusammenführen).
+
+```bash
+.venv/bin/python -m musiksort.startmodell laden       # entfernen: … startmodell entfernen
+```
+
 ## Befehle
 
 ```bash
@@ -92,6 +102,7 @@ Danach läuft die App unter `http://<rechner>:8097`.
 .venv/bin/python -m musiksort.sprache              # Gesangssprache messen
 .venv/bin/python -m musiksort.dupauto              # Duplikat-Automatik
 .venv/bin/python -m musiksort.tags --zaehlen       # Sterne/Sprachen, die noch in die Dateien müssen
+.venv/bin/python -m musiksort.startmodell exportieren  # eigene Bewertungen als Startmodell (anonym)
 sh scripts/check.sh                                # Syntax, JavaScript, Tests
 ```
 
@@ -104,6 +115,8 @@ Fremde Bestandteile:
 - **Essentia-Modelle** (Discogs-EffNet, genre_discogs400) der Music Technology Group, Universitat Pompeu Fabra:
   [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/) – **nur nicht-kommerziell**.
   Deshalb nicht im Repo; wer sie lädt, ist an diese Lizenz gebunden.
+- **Startmodell** (`startmodell/`): mit den Essentia-Modellen berechnet, daher ebenfalls
+  [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/), nur nicht-kommerziell (siehe `startmodell/LIZENZ.md`).
 - **Whisper**-Gewichte (OpenAI) und faster-whisper: MIT
 - **Font Awesome Free**: Icons CC BY 4.0, Schrift SIL OFL 1.1, Code MIT (`musiksort/static/fa/LICENSE.txt`)
 - **AcoustID**: der Webdienst ist für nicht-kommerzielle Nutzung frei; jede Installation braucht ihren eigenen Schlüssel.

@@ -69,6 +69,7 @@ STICHPROBE_MIN = 10        # so viele Stichproben je Genre, bevor sie zählen
 STICHPROBE_ZIEL = 0.90     # positiver Beleg fürs Verschieben: Untergrenze der Stichproben-Quote
 AUSREISSER_QUANTIL = 0.10  # weiter weg vom Genre-Zentrum als 90 % der eigenen Beispiele: nicht automatisch
 LAENGE_GEWICHT = 1.0       # Gewicht der Längen-Merkmale neben dem Klang (Mixtapes erkennen)
+START_GEWICHT = 0.5        # Gewicht eines Startmodell-Beispiels gegenüber einer eigenen Bewertung
 SPRACHE_GEWICHT = 1.0      # Gewicht der Gesangssprache (Deutschrap vs. US-Rap klingt gleich, Sprache trennt)
 SPRACHE_ZUERST = ("Hip Hop",)  # Lieder, die das Modell hier sieht, bekommen ihre Sprache zuerst gemessen
 SPRACHE_DATEI_P = 0.7      # erst ab dieser Sicherheit wird die Sprache in die Datei geschrieben

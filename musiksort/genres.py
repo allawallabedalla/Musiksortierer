@@ -122,7 +122,7 @@ def zusammenfuehren(con, quelle, ziel, _commit=True):
             zusammenfuehren(con, kind["id"], gleich["id"], _commit=False)
         else:
             con.execute("UPDATE genres SET eltern_id=? WHERE id=?", (ziel, kind["id"]))
-    for tabelle, spalte in (("vorhersagen", "genre_id"), ("vorhersagen", "zweit_id"),
+    for tabelle, spalte in (("vorhersagen", "genre_id"), ("vorhersagen", "zweit_id"), ("startbeispiele", "genre_id"),
                             ("stichproben", "vorhergesagt"), ("stichproben", "gewaehlt")):
         con.execute(f"UPDATE {tabelle} SET {spalte}=? WHERE {spalte}=?", (ziel, quelle))
     # Schwellen müssen neu geschätzt werden; ein gerade laufendes Training verwirft sein Ergebnis

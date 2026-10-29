@@ -304,7 +304,14 @@ def trainieren(con=None, cv_erzwingen=False, trocken=False):
     zaehl = {}
     for e in et:
         zaehl[e["genre_id"]] = zaehl.get(e["genre_id"], 0) + 1
-    genres = [g for g, n in zaehl.items() if n >= 2]
+    # Startmodell (fremde Beispiele): nur fürs Modell, Schwellen und Freigaben bleiben bei den eigenen
+    from . import startmodell
+    start = startmodell.beispiele(con)
+    mit_start = dict(zaehl)
+    if start is not None:
+        for g in start[3]:
+            mit_start[int(g)] = mit_start.get(int(g), 0) + 1
+    genres = [g for g, n in mit_start.items() if n >= 2]
     jetzt = db.jetzt()
     teil, eltern = _baum(con)
     stich = _stichproben(con, teil)
@@ -338,7 +345,10 @@ def trainieren(con=None, cv_erzwingen=False, trocken=False):
     verwechselt = None
     if cv_faellig:
         familie = duplikate.kopien(con)[0]
-        cv = _kreuzvalidierung(X, y, zaehl, [familie.get(e["lied_id"], -e["lied_id"]) for e in et])
+        eigen = np.array([zaehl[g] >= 2 for g in y], dtype=bool)  # wie bisher: nur eigene Genres mit ≥ 2
+        cv = _kreuzvalidierung(X[eigen], y[eigen], zaehl,
+                               [familie.get(e["lied_id"], -e["lied_id"]) for e, m in zip(et, eigen) if m]) \
+            if eigen.any() else None
         if cv is not None:
             wahr, vorh, sicher, P_cv, klassen_cv, _ = cv
             richtig = wahr == vorh
@@ -378,11 +388,18 @@ def trainieren(con=None, cv_erzwingen=False, trocken=False):
             continue
         belegt[g] = int(n >= config.STICHPROBE_MIN and wilson_unten(ok, n) >= config.STICHPROBE_ZIEL)
 
-    modell = LogisticRegression(C=2.0, max_iter=2000, class_weight="balanced").fit(X, y)
+    E_fit, X_fit, y_fit, gewicht = E, X, y, np.ones(len(y))
+    if start is not None:
+        nimm = np.isin(start[3], genres)
+        E_fit = np.vstack([E, start[0][nimm]])
+        X_fit = np.vstack([X, _merkmale(start[0][nimm], start[1][nimm], start[2][nimm])])
+        y_fit = np.concatenate([y, start[3][nimm]])
+        gewicht = np.concatenate([gewicht, np.full(int(nimm.sum()), config.START_GEWICHT)])
+    modell = LogisticRegression(C=2.0, max_iter=2000, class_weight="balanced").fit(X_fit, y_fit, sample_weight=gewicht)
     klassen = [int(k) for k in modell.classes_]
     zentren = np.zeros((len(klassen), E.shape[1]), np.float32)
     for j, g in enumerate(klassen):
-        summe = E[y == g].sum(0)
+        summe = E_fit[y_fit == g].sum(0)
         zentren[j] = summe / (np.linalg.norm(summe) + 1e-9)
 
     # Obergenre-Stufe: Spalten des Teilbaums und Klang-Zentrum je Obergenre

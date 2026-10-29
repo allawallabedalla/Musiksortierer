@@ -47,6 +47,15 @@ CREATE TABLE IF NOT EXISTS etiketten (
     PRIMARY KEY (lied_id, genre_id)
 );
 
+-- Startmodell (startmodell.py): fremde, anonyme Beispiele; zählen nur fürs Modell, nie für Freigaben
+CREATE TABLE IF NOT EXISTS startbeispiele (
+    id INTEGER PRIMARY KEY,
+    genre_id INTEGER NOT NULL REFERENCES genres(id),
+    emb BLOB NOT NULL,          -- float16 × 1280, normiert
+    dauer REAL,
+    sprache BLOB                -- float16 × sprache.BREITE, ohne Gewicht
+);
+
 CREATE TABLE IF NOT EXISTS uebersprungen (
     lied_id INTEGER PRIMARY KEY REFERENCES lieder(id),
     ts REAL NOT NULL, anzahl INTEGER NOT NULL DEFAULT 1
