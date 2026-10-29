@@ -561,12 +561,8 @@ def _bewertungen_mind():
 
 def _stichproben_noetig(ok, n):
     """Wie viele Stichproben insgesamt, wenn ab jetzt alle stimmen (vorsichtige Untergrenze ≥ STICHPROBE_ZIEL)."""
-    m = max(n, config.STICHPROBE_MIN)
-    while lernen.wilson_unten(ok + (m - n), m) < config.STICHPROBE_ZIEL:
-        m += 1
-        if m > 10000:
-            return None
-    return m
+    fehlt = lernen.stichproben_fehlen(ok, n, grenze=10000)
+    return None if fehlt is None else n + fehlt
 
 
 @app.get("/api/stand")

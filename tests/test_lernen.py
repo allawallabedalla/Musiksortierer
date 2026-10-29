@@ -397,3 +397,16 @@ def test_kreuzvalidierung_trennt_kopien_nicht():
     mit = lernen._kreuzvalidierung(X, y, zaehl, familien=np.tile(np.arange(n), 2))
     assert (ohne[0] == ohne[1]).mean() > 0.6            # geschönt: Zufall wären ~33 %
     assert (mit[0] == mit[1]).mean() < 0.5              # ehrlich: nahe Zufall
+
+
+def test_stichproben_dorthin_wo_sie_am_meisten_freischalten():
+    # Zahlen wie am 29.10.: Deutsch HipHop 10/10 (2.690 warten), Hip Hop grob 27/28 (5.520),
+    # Reggae belegt 22/22 (2.240), Rock grob 18/19 (480), Electronic 17/20 (wenige)
+    assert [lernen.stichproben_fehlen(*s) for s in [(10, 10), (27, 28), (22, 22), (18, 19), (0, 0)]] == [5, 4, 0, 13, 15]
+    w = dict(lernen.stichproben_gewichte({"dhh": 2690, "hh": 5520, "reggae": 2240, "rock": 480, "el": 30},
+                                         {"dhh": (10, 10), "hh": (27, 28), "reggae": (22, 22), "rock": (18, 19),
+                                          "el": (17, 20)}))
+    anteil = {g: v / sum(w.values()) for g, v in w.items()}
+    assert anteil["hh"] + anteil["dhh"] > 0.9      # fast alle Stichproben gehen dahin, wo 9 Antworten ~8.200 Lieder belegen
+    assert 0 < anteil["reggae"] < 0.02             # belegt: nur noch selten nachgeprüft, aber nie ganz vergessen
+    assert w["rock"] > w["el"] > 0

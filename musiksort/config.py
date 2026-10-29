@@ -67,6 +67,7 @@ SPAETER_TAGE = 3           # übersprungene Lieder kommen danach wieder
 STICHPROBE_ANTEIL = 0.15   # Anteil der Karten, die eine automatische Zuordnung prüfen
 STICHPROBE_MIN = 10        # so viele Stichproben je Genre, bevor sie zählen
 STICHPROBE_ZIEL = 0.90     # positiver Beleg fürs Verschieben: Untergrenze der Stichproben-Quote
+STICHPROBE_NACHPRUEFEN = 200  # belegte/aussichtslose Genres: Gewicht wie bei so vielen fehlenden Stichproben
 AUSREISSER_QUANTIL = 0.10  # weiter weg vom Genre-Zentrum als 90 % der eigenen Beispiele: nicht automatisch
 LAENGE_GEWICHT = 1.0       # Gewicht der Längen-Merkmale neben dem Klang (Mixtapes erkennen)
 START_GEWICHT = 0.5        # Gewicht eines Startmodell-Beispiels gegenüber einer eigenen Bewertung

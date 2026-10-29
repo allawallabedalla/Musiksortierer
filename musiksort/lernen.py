@@ -197,6 +197,29 @@ def _stichproben(con, teil=None):
     return erg
 
 
+def stichproben_fehlen(ok, n, grenze=500):
+    """Wie viele richtige Stichproben noch fehlen, bis das Genre belegt ist (0 = belegt, None = mehr als grenze)."""
+    m = max(n, config.STICHPROBE_MIN)
+    while wilson_unten(ok + (m - n), m) < config.STICHPROBE_ZIEL:
+        m += 1
+        if m - n > grenze:
+            return None
+    return m - n
+
+
+def stichproben_gewichte(wartend, stich):
+    """Welches Genre die nächste Stichprobe bekommt: Lieder, die eine richtige Antwort freischaltet.
+
+    wartend: Genre → Zahl automatisch zugeordneter Lieder; stich: Genre → (richtig, gesamt).
+    Gewicht = wartende Lieder / fehlende Stichproben – ein großes Genre kurz vor dem Beleg zuerst.
+    Belegte Genres werden nur noch selten nachgeprüft, aussichtslose ebenso (wie fehlten STICHPROBE_NACHPRUEFEN)."""
+    paare = []
+    for g, n in wartend.items():
+        fehlt = stichproben_fehlen(*stich.get(g, (0, 0)))
+        paare.append((g, n / (fehlt or config.STICHPROBE_NACHPRUEFEN)))
+    return paare
+
+
 def _info(con, schluessel, wert=None):
     if wert is None:
         r = con.execute("SELECT wert FROM modell_info WHERE schluessel=?", (schluessel,)).fetchone()
@@ -496,8 +519,8 @@ def verwechslungen_finden(y, vorhergesagt, min_n=5, ab_anteil=0.2):
 def naechste(con, anzahl=3, ausschliessen=()):
     """Backlog-Mischung, alles direkt aus der Datenbank:
 
-    - Stichprobe (~15 %): ein automatisch zugeordnetes Lied, Genre zuerst – Genres mit
-      wenig Belegen bevorzugt (jedes Genre braucht eigene Stichproben).
+    - Stichprobe (~15 %): ein automatisch zugeordnetes Lied, Genre zuerst – bevorzugt, wo eine
+      richtige Antwort die meisten Lieder freischaltet (stichproben_gewichte).
     - Klanggruppe: noch unbenannte Gruppen, größte zuerst.
     - Mehr Beispiele: Genres, die laut Modell häufig sind, aber < 30 Bewertungen haben.
     - Unsicher: kleinster Abstand zwischen den zwei besten Genres.
@@ -524,8 +547,9 @@ def naechste(con, anzahl=3, ausschliessen=()):
     hat_modell = con.execute("SELECT 1 FROM vorhersagen LIMIT 1").fetchone() is not None
     stich = _stichproben(con)
     # geprüft wird jede Stufe: fein (auto) und grob (Obergenre)
-    auto_genres = [r[0] for r in con.execute("SELECT DISTINCT genre_id FROM vorhersagen WHERE auto=1 "
-                                             "UNION SELECT DISTINCT ober_id FROM vorhersagen WHERE ober_id IS NOT NULL")]
+    wartend = dict(con.execute("SELECT g, COUNT(*) FROM (SELECT genre_id g FROM vorhersagen WHERE auto=1 "
+                               "UNION ALL SELECT ober_id FROM vorhersagen WHERE ober_id IS NOT NULL) GROUP BY g"))
+    auto_genres = stichproben_gewichte(wartend, stich)
     n_bew = dict(con.execute("SELECT genre_id, COUNT(*) FROM etiketten WHERE haupt=1 GROUP BY genre_id").fetchall())
     haeufig = [(g, n) for g, n in con.execute("SELECT genre_id, COUNT(*) FROM vorhersagen GROUP BY genre_id")
                if n >= 50 and n_bew.get(g, 0) < config.MIN_BEWERTUNGEN_AUTO]
@@ -551,7 +575,7 @@ def naechste(con, anzahl=3, ausschliessen=()):
         wahl = grund = None
         wurf = zufall.random()
         if auto_genres and wurf < config.STICHPROBE_ANTEIL:
-            g = gewichtet([(g, 1 / (1 + stich.get(g, (0, 0))[1])) for g in auto_genres])
+            g = gewichtet(auto_genres)
             wahl = frei(f"SELECT v.lied_id FROM vorhersagen v {analysiert.format('v')} WHERE (v.auto=1 AND v.genre_id=?) "
                         "OR v.ober_id=? ORDER BY random() LIMIT 150", g, g)
             grund = "stichprobe"
