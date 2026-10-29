@@ -183,8 +183,7 @@ def _init_worker():
 
 
 def _ffprobe(pfad):
-    r = subprocess.run(["ffprobe", "-v", "error", "-print_format", "json", "-show_format",
-                        "-show_streams", "-select_streams", "a:0", pfad],
+    r = subprocess.run(["ffprobe", "-v", "error", "-print_format", "json", "-show_format", "-show_streams", pfad],
                        capture_output=True, text=True, timeout=60)
     if r.returncode:
         meldung = r.stderr.strip()[:200]
@@ -192,7 +191,8 @@ def _ffprobe(pfad):
             raise Voruebergehend("ffprobe: " + meldung)  # liegt vermutlich am NAS, nicht an der Datei
         raise RuntimeError("ffprobe: " + meldung)
     d = json.loads(r.stdout)
-    s = (d.get("streams") or [{}])[0]
+    spuren = d.get("streams") or []
+    s = next((x for x in spuren if x.get("codec_type") == "audio"), {})
     f = d.get("format", {})
     tags = {k.lower(): v for k, v in {**f.get("tags", {}), **s.get("tags", {})}.items()}
     codec = s.get("codec_name", "")
@@ -211,6 +211,9 @@ def _ffprobe(pfad):
         "titel": tags.get("title"),
         "album": tags.get("album"),
         "tag_genre": tags.get("genre"),
+        # echte Videospur (kein eingebettetes Cover): Handyclip, Vortrag, Musikvideo – kein Lied
+        "video": any(x.get("codec_type") == "video" and not (x.get("disposition") or {}).get("attached_pic")
+                     for x in spuren),
     }
 
 
@@ -298,6 +301,9 @@ def _analysiere(zeile):
     t0 = time.time()
     try:
         info = _ffprobe(pfad)
+        if info.pop("video"):
+            return lied_id, {**info, "status": "video", "fehler": None, "analysiert": time.time(),
+                             "analyse_s": round(time.time() - t0, 2)}
         a = _dekodieren(pfad, info["dauer"])
         start, quelle = snippet_start(a, info["dauer"])
         fp = _fingerabdruck(a)
@@ -413,15 +419,39 @@ def analysieren(anzahl=None, zufall=False, jobs=2):
     return fertig
 
 
+def videos_aussortieren(ausgabe=print):
+    """Schon erfasste Dateien in Containern, die Video tragen können, nachprüfen: mit Videospur → „video“.
+    Bewertungen bleiben stehen (nichts gelöscht); App, Training und Duplikate sehen nur „analysiert“."""
+    con = db.verbinden()
+    if not nas_da():
+        raise SystemExit(f"{config.MEDIA_ROOT} ist nicht eingebunden; nichts geändert")
+    zeilen = con.execute("SELECT id, pfad FROM lieder WHERE status IN ('analysiert','fehler','neu') "
+                         "AND (lower(pfad) LIKE '%.mp4' OR lower(pfad) LIKE '%.m4a')").fetchall()
+    videos = []
+    for lid, rel in zeilen:
+        try:
+            if _ffprobe(str(config.medienpfad(rel)))["video"]:
+                videos.append(lid)
+        except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as e:
+            ausgabe(f"übersprungen: {rel}: {e}")
+    with con:
+        con.executemany("UPDATE lieder SET status='video' WHERE id=?", [(i,) for i in videos])
+        n_ungueltig = gruppen_ungueltig_machen(con)
+    ausgabe(f"{len(zeilen)} geprüft, {len(videos)} Videos aussortiert, Duplikatgruppen ungültig {n_ungueltig}")
+    return videos
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("schritt", choices=["suchen", "analysieren"])
+    ap.add_argument("schritt", choices=["suchen", "analysieren", "videos"])
     ap.add_argument("-n", "--anzahl", type=int)
     ap.add_argument("--zufall", action="store_true")
     ap.add_argument("-j", "--jobs", type=int, default=2)
     a = ap.parse_args()
     if a.schritt == "suchen":
         suchen()
+    elif a.schritt == "videos":
+        videos_aussortieren()
     elif analysieren(a.anzahl, a.zufall, a.jobs):
         # nur wenn etwas dazukam: Duplikate neu berechnen (sonst stündlich unnötig)
         from . import duplikate
