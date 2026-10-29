@@ -300,7 +300,7 @@ async function auffuellen() {
     n.vorhergesagt = n.vorhergesagt ?? n.vorschlag[0]?.id ?? null;  // bei Stichproben: das geprüfte Genre (auch Obergenre)
     schlange.push(n);
     if (!n.lied.direkt) fetch(`/api/snippet/${n.lied_id}`).catch(() => {});  // Ausschnitt vorwärmen (nur ohne Direktwiedergabe)
-    else fetch(`/api/wellenform/${n.lied_id}`).catch(() => {});  // Wellenform vorab berechnen lassen
+    else welleZeigen(n.lied_id);  // Wellenform vorab holen (zeichnet erst, wenn die Karte da ist)
   }
 }
 
@@ -439,7 +439,7 @@ function zeichneLied() {
       <button class="play" id="play" aria-label="Abspielen"><i class="fa-regular fa-circle-play"></i></button>
       ${l.direkt ? `<div class="scrub"><div class="spur" id="scrub" role="slider" tabindex="0" aria-label="Stelle im Lied"
           aria-valuemin="0" aria-valuemax="${Math.max(1, Math.round(l.dauer || 0))}" aria-valuenow="${Math.round(l.snippet_start || 0)}">
-          <svg class="welle" viewBox="0 0 200 40" preserveAspectRatio="none" aria-hidden="true"></svg><div class="gespielt"></div><div class="griff"></div></div><div class="zeit" id="zeit"></div></div>`
+          <svg class="welle" data-lied="${aktuell.lied_id}" viewBox="0 0 200 40" preserveAspectRatio="none" aria-hidden="true"></svg><div class="gespielt"></div><div class="griff"></div></div><div class="zeit" id="zeit"></div></div>`
         : `<div class="balken"><div id="fort"></div></div>
       <button class="knopf" id="anders"><i class="fa-regular fa-clock"></i>Andere Stelle</button>`}
     </div>
@@ -818,11 +818,15 @@ function zeitZeigen(t) {
   sc.setAttribute("aria-valuetext", `${minSek(t)} von ${minSek(max)}`);
   z.textContent = `${minSek(t)} / ${minSek(max)}`;
 }
+// Wellenform je Lied einmal holen; gezeichnet wird in die Leiste genau dieses Lieds, egal wie oft die Karte neu entsteht
+const wellen = new Map();
 async function welleZeigen(lid) {
   try {
-    const w = await api(`/api/wellenform/${lid}`);
-    const svg = $("#scrub .welle");
-    if (!svg || aktuell?.lied_id !== lid || !w.length) return;  // inzwischen andere Karte
+    if (!wellen.has(lid)) wellen.set(lid, api(`/api/wellenform/${lid}`).catch(e => { wellen.delete(lid); throw e; }));
+    const w = await wellen.get(lid);
+    if (wellen.size > 50) wellen.delete(wellen.keys().next().value);
+    const svg = document.querySelector(`#scrub .welle[data-lied="${lid}"]`);
+    if (!svg || !w.length) return;  // inzwischen andere Karte
     const breite = 200 / w.length;
     svg.innerHTML = w.map((v, i) => { const h = Math.max(1, v / 255 * 40);
       return `<rect x="${(i * breite).toFixed(2)}" y="${((40 - h) / 2).toFixed(2)}" width="${(breite * 0.7).toFixed(2)}" height="${h.toFixed(2)}"/>`; }).join("");
