@@ -296,6 +296,34 @@ def _fingerabdruck(a):
     return np.asarray(roh, dtype=np.int64).astype(np.uint32).view(np.int32)
 
 
+STUMM_DB = -60.0   # Pegel (RMS, dBFS) über das ganze Gehörte: darunter ist nichts zu hören (leise Klassik ~ -35)
+
+
+def _pegel(a):
+    return float(20 * np.log10(np.sqrt(np.mean(np.square(a, dtype=np.float64))) + 1e-12)) if a.size else -240.0
+
+
+def stumme_aussortieren(ids, ausgabe=print):
+    """Erfasste Dateien nachprüfen: ist über die ganze Länge nichts zu hören → „stumm“ (nichts gelöscht)."""
+    con = db.verbinden()
+    if not nas_da():
+        raise SystemExit(f"{config.MEDIA_ROOT} ist nicht eingebunden; nichts geändert")
+    stumm = []
+    for lid in ids:
+        r = con.execute("SELECT pfad FROM lieder WHERE id=? AND status='analysiert'", (lid,)).fetchone()
+        if r is None:
+            continue
+        pegel = _pegel(_dekodieren(str(config.medienpfad(r[0]))))
+        ausgabe(f"{lid}: {pegel:.1f} dB {r[0]}")
+        if pegel < STUMM_DB:
+            stumm.append(lid)
+    with con:
+        con.executemany("UPDATE lieder SET status='stumm' WHERE id=?", [(i,) for i in stumm])
+        n_ungueltig = gruppen_ungueltig_machen(con)
+    ausgabe(f"{len(stumm)} von {len(ids)} stumm, Duplikatgruppen ungültig {n_ungueltig}")
+    return stumm
+
+
 def _analysiere(zeile):
     lied_id, pfad = zeile  # absoluter, schon geprüfter Pfad (der Hauptprozess kennt die Wurzel)
     t0 = time.time()
@@ -305,6 +333,9 @@ def _analysiere(zeile):
             return lied_id, {**info, "status": "video", "fehler": None, "analysiert": time.time(),
                              "analyse_s": round(time.time() - t0, 2)}
         a = _dekodieren(pfad, info["dauer"])
+        if _pegel(a) < STUMM_DB:
+            return lied_id, {**info, "status": "stumm", "fehler": None, "analysiert": time.time(),
+                             "analyse_s": round(time.time() - t0, 2)}
         start, quelle = snippet_start(a, info["dauer"])
         fp = _fingerabdruck(a)
         # Das Klang-Modell kostet ~1,5 s je Minute Audio: es hört nur bis zu
@@ -443,7 +474,8 @@ def videos_aussortieren(ausgabe=print):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("schritt", choices=["suchen", "analysieren", "videos"])
+    ap.add_argument("schritt", choices=["suchen", "analysieren", "videos", "stumm"])
+    ap.add_argument("ids", nargs="*", type=int, help="bei „stumm“: diese Lied-IDs nachprüfen")
     ap.add_argument("-n", "--anzahl", type=int)
     ap.add_argument("--zufall", action="store_true")
     ap.add_argument("-j", "--jobs", type=int, default=2)
@@ -452,6 +484,8 @@ def main():
         suchen()
     elif a.schritt == "videos":
         videos_aussortieren()
+    elif a.schritt == "stumm":
+        stumme_aussortieren(a.ids)
     elif analysieren(a.anzahl, a.zufall, a.jobs):
         # nur wenn etwas dazukam: Duplikate neu berechnen (sonst stündlich unnötig)
         from . import duplikate
