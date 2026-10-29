@@ -1,0 +1,25 @@
+# Analyse neuer Lieder (Klang-Steckbrief, Fingerabdruck), gedrosselt: andere Dienste auf dem Rechner haben Vorrang.
+[Unit]
+Description=Musiksortierer (Analyse neuer Lieder + Duplikate)
+After=network-online.target
+OnFailure=musiksort-meldung@%n.service
+
+[Service]
+Slice=musiksort.slice
+Type=oneshot
+WorkingDirectory=%h/musiksortierer
+ExecStart=/usr/bin/taskset -c 4,5 %h/musiksortierer/.venv/bin/python -m musiksort.scan analysieren --zufall -j 2
+Restart=on-failure
+RestartSec=300
+Nice=15
+IOSchedulingClass=idle
+CPUQuota=180%
+MemoryMax=3G
+MemorySwapMax=512M
+TimeoutStartSec=infinity
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=tmpfs
+BindReadOnlyPaths=%h/musiksortierer /mnt/media
+BindPaths=%h/.local/share/musiksortierer %h/.cache/musiksortierer

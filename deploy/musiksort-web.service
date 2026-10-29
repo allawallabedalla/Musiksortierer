@@ -1,0 +1,34 @@
+# Musiksortierer: Bewertungs-App (Port 8097). Install: deploy/installieren.sh
+[Unit]
+Description=Musiksortierer (Bewertungs-App)
+After=network-online.target
+OnFailure=musiksort-meldung@%n.service
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Slice=musiksort.slice
+WorkingDirectory=%h/musiksortierer
+EnvironmentFile=%h/.config/musiksortierer/web.env
+EnvironmentFile=-%h/.config/musiksortierer/acoustid.env
+ExecStart=/usr/bin/taskset -c 4,5 %h/musiksortierer/.venv/bin/uvicorn musiksort.web:app --host 0.0.0.0 --port 8097 --log-level warning --timeout-graceful-shutdown 3
+Restart=on-failure
+RestartSec=10
+MemoryMax=1500M
+TasksMax=128
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=tmpfs
+BindReadOnlyPaths=%h/musiksortierer %h/.config/musiksortierer /mnt/media
+BindPaths=%h/.local/share/musiksortierer %h/.cache/musiksortierer
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=default.target

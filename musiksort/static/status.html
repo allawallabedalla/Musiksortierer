@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Musiksortierer · Status</title>
+<link rel="icon" type="image/png" href="/favicon.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="stylesheet" href="/fa/css/fontawesome.min.css">
+<link rel="stylesheet" href="/fa/css/regular.min.css">
+<style>
+/* Farben wie index.html (Schema Creme · Nachtblau · Koralle) */
+:root{--bg:#f6f1e7;--karte:#fffdf8;--text:#1b2a4e;--leise:#5b647d;--linie:#ddd5c4;--rand:#1b2a4e;--koralle:#e2665a;--gut:#2f8f5b;--gut-schrift:#23784a;--warn:#b25e00;--chip:#f1eadb}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1730;--karte:#18223f;--text:#f6f1e7;--leise:#aab1c5;--linie:#2b3758;--rand:#3c4a72;--koralle:#f07a6e;--gut:#43b77a;--gut-schrift:#43b77a;--warn:#e39a3b;--chip:#222d4d}}
+*{box-sizing:border-box}
+body{margin:0 auto;max-width:1200px;background:var(--bg);color:var(--text);font:16px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;padding:env(safe-area-inset-top) 16px calc(24px + env(safe-area-inset-bottom))}
+a{color:inherit}
+header{display:flex;align-items:center;gap:10px;margin:14px 0}
+header h1{font-size:20px;margin:0;flex:1}
+.karte{background:var(--karte);border:2px solid var(--rand);border-radius:18px;padding:16px;margin-bottom:12px}
+.raster{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+.raster .karte{margin:0}
+.zahl{font-size:30px;font-weight:700}
+.unter{color:var(--leise);font-size:14px}
+i{color:var(--koralle);margin-right:6px}
+.mini{height:8px;background:var(--chip);border-radius:4px;overflow:hidden;margin:6px 0}
+.mini div{height:100%;background:var(--koralle)}
+.saeulen{display:flex;align-items:flex-end;gap:4px;height:120px;margin-top:10px}
+.saeulen div{flex:1;background:var(--koralle);border-radius:4px 4px 0 0;min-height:2px}
+.achse{display:flex;justify-content:space-between;font-size:13px;color:var(--leise)}
+table{width:100%;border-collapse:collapse;font-size:15px}
+td,th{text-align:left;padding:7px 4px;border-bottom:1px solid var(--linie);vertical-align:top}
+th{font-weight:600;color:var(--leise);font-size:14px}
+.gut{color:var(--gut-schrift)}
+.warte{color:var(--warn)}
+@media (max-width:600px){.weg{display:none}}
+</style>
+</head>
+<body>
+<header><a href="/" aria-label="Zurück zum Bewerten"><i class="fa-regular fa-circle-left" style="font-size:22px"></i></a>
+  <h1>Status</h1><span class="unter" id="stand"></span></header>
+<div class="raster" id="kacheln"></div>
+<div class="karte"><b><i class="fa-regular fa-chart-bar"></i>Analyse je Stunde</b> <span class="unter">letzte 24 Stunden</span>
+  <div class="saeulen" id="verlauf" role="img" aria-label="Analysierte Lieder je Stunde"></div>
+  <div class="achse"><span>vor 24 Std.</span><span>jetzt</span></div></div>
+<div class="karte"><b><i class="fa-regular fa-folder"></i>Genres auf dem Weg zum Selbst-Sortieren</b>
+  <div class="unter" id="regel"></div>
+  <table><thead><tr><th>Genre</th><th>Bewertet</th><th class="weg">Trifft</th><th>Stichproben</th><th>Stand</th></tr></thead>
+  <tbody id="genres"></tbody></table></div>
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const zahl = n => Math.round(n).toLocaleString("de-DE");
+const pz = x => x == null ? "–" : Math.round(x * 100) + " %";
+const rest = h => h < 48 ? `${zahl(h)} Std.` : `${(h / 24).toLocaleString("de-DE", {maximumFractionDigits: 1})} Tage`;
+
+async function laden() {
+  const [a, s] = await Promise.all([fetch("/api/analyse?stunden=24").then(r => r.json()), fetch("/api/stand").then(r => r.json())]);
+  const L = a.lieder, fertig = L.analysiert || 0, offen = L.neu || 0, gesamt = fertig + offen + (L.fehler || 0);
+  const d = a.dienst;
+  const tempo = a.tempo ? `≈ ${zahl(a.tempo)}/Std. (Spanne ${zahl(a.tempo_min)}–${zahl(a.tempo_max)}, n = ${a.tempo_n} Viertelstunden)` : "kein Tempo messbar";
+  $("#kacheln").innerHTML = `
+    <div class="karte"><div class="unter"><i class="fa-regular fa-hourglass-half"></i>Analysiert</div>
+      <div class="zahl">${zahl(fertig)}</div><div class="unter">von ${zahl(gesamt)}${L.fehler ? ` · ${zahl(L.fehler)} Fehler` : ""}</div>
+      <div class="mini"><div style="width:${gesamt ? 100 * fertig / gesamt : 0}%"></div></div>
+      <div class="unter">${tempo}${offen && a.tempo ? ` · Rest ≈ ${rest(offen / a.tempo)}` : ""}</div></div>
+    <div class="karte"><div class="unter"><i class="fa-regular fa-circle-play"></i>Analysedienst</div>
+      <div class="zahl">${d.laeuft ? "läuft" : "pausiert"}</div>
+      <div class="unter">${d.laeuft ? `Speicher ${zahl(d.speicher_mb)} MB${d.bremse_mb ? ` (Bremse ${zahl(d.bremse_mb)} MB)` : ""} · CPU gebremst ${pz(d.cpu_gebremst)}` : "startet stündlich von selbst"}
+      ${a.dauer_s ? ` · ⌀ ${a.dauer_s.toLocaleString("de-DE")} s je Lied` : ""}</div></div>
+    <div class="karte"><div class="unter"><i class="fa-regular fa-circle-check"></i>Bewertet</div>
+      <div class="zahl">${zahl(s.bewertet)}</div><div class="unter">${zahl(s.automatisch)} Lieder würde das Modell selbst einsortieren</div></div>`;
+  const max = Math.max(1, ...a.verlauf.map(v => v.n));
+  $("#verlauf").innerHTML = [...a.verlauf].reverse().map(v => `<div style="height:${100 * v.n / max}%" title="vor ${v.vor_stunden} Std.: ${v.n}"></div>`).join("");
+  $("#regel").textContent = `Selbst sortieren ab ${s.bewertungen_mind} fehlerfreien Bewertungen je Genre (vorsichtige Trefferquote ≥ ${pz(s.ziel)}); verschoben wird erst nach ≥ ${s.stichprobe_min} Stichproben mit ≥ ${pz(s.stichprobe_ziel)}.`;
+  $("#genres").innerHTML = s.modell.map(m => {
+    const fehlt = Math.max(0, s.bewertungen_mind - (m.n || 0));
+    const stand = m.belegt && m.schwelle != null ? `<span class="gut">sortiert selbst</span>`
+      : m.belegt && m.ober_schwelle != null ? `<span class="gut">sortiert grob (Obergenre)</span>`
+      : m.ober_schwelle != null && m.schwelle == null ? `<span class="warte">grob bereit, wartet auf Stichproben (${m.stichprobe_n || 0}/${m.stichprobe_noetig ?? "?"})</span>`
+      : m.schwelle != null ? `<span class="warte">wartet auf Stichproben (${m.stichprobe_n || 0}/${m.stichprobe_noetig ?? "?"})</span>`
+      : fehlt > 0 ? `noch ${fehlt} Bewertung${fehlt === 1 ? "" : "en"}`
+      : `<span class="warte">genug Beispiele, aber noch zu oft verwechselt</span>`;
+    // Trefferquote: an der Schwelle (wenn es eine gibt), sonst die grobe aus der Kreuzvalidierung
+    const treffer = m.trefferquote != null ? pz(m.trefferquote)
+      : m.quote_roh != null ? `${pz(m.quote_roh)} <span class="unter">grob</span>` : "–";
+    return `<tr><td>${esc(m.pfad)}</td><td>${m.n || 0}</td><td class="weg">${treffer}</td>
+      <td>${m.stichprobe_ok || 0}/${m.stichprobe_n || 0}</td><td>${stand}</td></tr>`;
+  }).join("") || `<tr><td colspan="5" class="unter">Noch kein Modell trainiert.</td></tr>`;
+  $("#stand").textContent = "Stand " + new Date().toLocaleTimeString("de-DE", {hour: "2-digit", minute: "2-digit"});
+}
+laden().catch(e => { $("#kacheln").innerHTML = `<div class="karte">Server nicht erreichbar: ${esc(e.message)}</div>`; });
+setInterval(() => { if (!document.hidden) laden().catch(() => {}); }, 60000);
+</script>
+</body>
+</html>

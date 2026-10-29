@@ -1,0 +1,1186 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Sortierer">
+<title>Musiksortierer</title>
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="icon" type="image/png" href="/favicon.png">
+<meta name="theme-color" content="#f6f1e7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1730" media="(prefers-color-scheme: dark)">
+<!-- Icons lokal (Font Awesome 6.7.2 Free, nur Outline-Stil): ohne Internet da, kein Abruf bei Fremden -->
+<link rel="stylesheet" href="/fa/css/fontawesome.min.css">
+<link rel="stylesheet" href="/fa/css/regular.min.css">
+<style>
+/* Farben aus tokens.css (Schema Creme · Nachtblau · Koralle), hier unter eigenen Namen */
+:root{--bg:#f6f1e7;--karte:#fffdf8;--text:#1b2a4e;--leise:#5b647d;--linie:#ddd5c4;--rand:#1b2a4e;--akzent:#1b2a4e;--akzent-text:#f6f1e7;
+  --koralle:#e2665a;--koralle-text:#fff;--gut:#2f8f5b;--gut-schrift:#23784a;--gut-text:#fff;--warn:#b25e00;--chip:#f1eadb}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1730;--karte:#18223f;--text:#f6f1e7;--leise:#aab1c5;--linie:#2b3758;--rand:#3c4a72;
+  --akzent:#f6f1e7;--akzent-text:#1b2a4e;--koralle:#f07a6e;--koralle-text:#1b0f0d;--gut:#43b77a;--gut-schrift:#43b77a;--gut-text:#06180d;--warn:#e39a3b;--chip:#222d4d}}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;padding:env(safe-area-inset-top) 16px calc(24px + env(safe-area-inset-bottom));max-width:1200px;margin:0 auto}
+/* Mac: höchstens 1200 px breit, wie alle Seiten (Design-Guideline §4, Audit F-10) */
+nav{display:flex;gap:8px;margin:12px 0}
+nav button{flex:1;border:2px solid var(--linie);background:var(--karte);color:var(--leise);border-radius:12px;padding:10px 4px;font-size:14px}
+nav button.an{color:var(--text);border-color:var(--rand);font-weight:600}
+nav button.an i{color:var(--koralle)}
+nav button{display:flex;flex-direction:column;align-items:center;gap:2px}
+nav i{font-size:20px}
+.karte{background:var(--karte);border:2px solid var(--rand);border-radius:18px;padding:16px;margin-bottom:12px}
+.grund{font-size:13px;color:var(--leise);display:flex;align-items:center;gap:6px}
+.grund i{color:var(--koralle)}
+.titel{font-size:20px;font-weight:700;margin:6px 0 2px;word-break:break-word}
+.titelzeile{display:flex;align-items:flex-start;gap:10px}
+.titelzeile .titel{flex:1;min-width:0}
+/* Favorit: Umriss-Stern; an = Koralle mit Fläche (nur Umriss-Icons, Design-Guideline) */
+.stern{flex:none;width:44px;height:44px;margin-top:2px;border-radius:50%;border:2px solid var(--linie);background:var(--karte);
+  color:var(--leise);font-size:20px;display:flex;align-items:center;justify-content:center}
+.stern i{margin:0}
+.stern.an{border-color:var(--koralle);background:var(--koralle);color:var(--koralle-text)}
+.unter{color:var(--leise);font-size:14px}
+.spieler{display:flex;align-items:center;gap:14px;margin-top:14px}
+.spieler .play{width:64px;height:64px;border-radius:50%;border:0;background:var(--koralle);color:var(--koralle-text);font-size:26px;flex:none}
+.balken{flex:1;height:6px;background:var(--chip);border-radius:3px;overflow:hidden}
+.balken div{height:100%;width:0;background:var(--koralle)}
+/* Scrub-Leiste übers ganze Lied (statt nur „Andere Stelle“) */
+.scrub{flex:1;min-width:0;display:flex;flex-direction:column}
+/* eigene Leiste statt <input type=range>: auf dem iPhone überall tippen und ziehen (nicht nur den kleinen Knopf) */
+.spur{position:relative;height:44px;touch-action:none;cursor:pointer;-webkit-user-select:none;user-select:none}
+.spur::before{content:"";position:absolute;left:0;right:0;top:19px;height:6px;border-radius:3px;background:var(--chip)}
+.spur .gespielt{position:absolute;left:0;top:19px;height:6px;border-radius:3px;background:var(--koralle);width:0}
+.spur .griff{position:absolute;top:11px;width:22px;height:22px;margin-left:-11px;border-radius:50%;background:var(--koralle);left:0;
+  box-shadow:0 0 0 3px var(--karte)}
+.spur:focus-visible{outline:2px solid var(--akzent);outline-offset:2px;border-radius:12px}
+.scrub .zeit{font-size:14px;color:var(--leise);text-align:right;font-variant-numeric:tabular-nums;margin-top:-4px}
+.knopf{border:2px solid var(--linie);background:var(--karte);color:var(--text);border-radius:12px;padding:10px 12px;font-size:15px;min-height:44px;min-width:44px}
+.knopf i{margin-right:6px}
+.vorschlagzeile{display:flex;gap:8px;margin-top:12px}
+.vorschlag{flex:1;min-width:0;text-align:left;border:2px solid var(--gut);color:var(--text);background:none;border-radius:12px;padding:12px;font-size:16px}
+.vorschlag.an{background:var(--gut);color:var(--gut-text)}
+.vorschlag.an .unter{color:inherit}
+.suche{width:100%;min-height:44px;padding:10px 12px;border-radius:12px;border:1px solid var(--linie);background:var(--karte);color:var(--text);font-size:16px;margin-bottom:10px}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{border:2px solid var(--linie);background:var(--chip);color:var(--text);border-radius:999px;padding:8px 14px;font-size:15px;min-height:44px}
+.chip.haupt{background:var(--akzent);color:var(--akzent-text);border-color:var(--akzent)}
+.chip.tag{border:2px dashed var(--akzent);color:var(--akzent)}
+.chip.neu{border-style:dashed}
+/* Aktionen oben, nah an Lied und Vorschlag: weniger Daumenweg; bleibt beim Scrollen durch die Genres stehen */
+/* Statusleiste des iPhones abdecken, damit beim Scrollen nichts dahinter durchscheint */
+body::before{content:"";position:fixed;left:0;right:0;top:0;height:env(safe-area-inset-top);background:var(--bg);z-index:6}
+.leiste{position:sticky;top:env(safe-area-inset-top);z-index:5;display:flex;gap:8px;margin:0 -16px 12px;padding:8px 16px;background:var(--bg);border-bottom:1px solid var(--linie)}
+/* einzeilig, feste Höhe: ein langer Genre-Name verschiebt nichts unter dem Daumen (Audit F-11) */
+.leiste button{flex:1;min-width:0;height:52px;padding:0 10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-radius:999px;font-size:15px;border:2px solid var(--rand);background:var(--karte);color:var(--text)}
+.leiste .los{background:var(--akzent);color:var(--akzent-text);border-color:var(--akzent);flex:1.6;font-weight:700;letter-spacing:.04em;text-transform:uppercase}
+.leiste button:disabled{opacity:.4}
+.leiste .zurueck{flex:0 0 52px;padding:0}
+.leiste .zurueck i{margin:0}
+details{margin-top:10px;color:var(--leise);font-size:13px}
+details summary{list-style:none;cursor:pointer;min-height:44px;display:flex;align-items:center;gap:6px}
+details summary::-webkit-details-marker{display:none}
+.zeile{display:grid;grid-template-columns:1fr 70px;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--linie);font-size:14px}
+.zeile:last-child{border:0}
+.mini{height:8px;background:var(--chip);border-radius:4px;overflow:hidden;margin-top:4px}
+.mini div{height:100%;background:var(--koralle)}
+/* Projektfortschritt oben auf der Hauptseite: drei ruhige Zeilen, Zahlen hinter ⓘ */
+.fortschritt{padding:12px 16px}
+.fzeile{display:grid;grid-template-columns:22px 92px 1fr 64px;gap:8px;align-items:center;min-height:30px;font-size:15px}
+.fzeile .mini{margin-top:0}
+.fzeile .fwert{text-align:right;font-variant-numeric:tabular-nums}
+.fzeile.knopflink{cursor:pointer}
+.fortschritt details{margin-top:4px}
+.zahl{font-size:28px;font-weight:600}
+.raster{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));gap:12px}
+.statuslink{display:flex;align-items:center;gap:14px;color:var(--text);text-decoration:none;min-height:64px}
+.statuslink>i{font-size:22px;color:var(--koralle)}
+.statuslink>span{flex:1}
+.leer{color:var(--leise);text-align:center;padding:40px 0}
+dialog{border:2px solid var(--rand);border-radius:18px;background:var(--karte);color:var(--text);width:min(92vw,480px);padding:16px}
+dialog::backdrop{background:rgba(0,0,0,.4)}
+select,input[type=text]{width:100%;min-height:44px;padding:10px;border-radius:10px;border:1px solid var(--linie);background:var(--bg);color:var(--text);font-size:16px;margin:6px 0 12px}
+.versteckt{display:none}
+.abschnitt{font-size:12px;color:var(--leise);text-transform:uppercase;letter-spacing:.04em;margin:12px 0 6px}
+.abschnitt:first-child{margin-top:0}
+.gruppe{display:inline-flex}
+.gruppe .chip{border-top-right-radius:0;border-bottom-right-radius:0}
+.chip.auf{border-top-left-radius:0;border-bottom-left-radius:0;border-left:0;padding:8px 12px;min-width:48px;color:var(--leise)}
+.chip.auf.offen{color:var(--akzent)}
+.ebene{margin-top:8px;padding:8px 0 0 10px;border-left:2px solid var(--linie)}
+.ebene .titel2{font-size:13px;color:var(--leise);margin-bottom:6px}
+.treffer{margin:-4px 0 10px}
+.treffer .chip{font-size:14px;padding:6px 12px;margin:0 6px 6px 0}
+.warnung{color:var(--warn);font-size:14px;margin:0 0 8px}
+.baumzeile{display:flex;align-items:center;gap:6px;padding:8px 0;border-bottom:1px solid var(--linie)}
+.baumzeile:last-child{border:0}
+.baumzeile .name{flex:1;min-width:0;word-break:break-word}
+.baumzeile{gap:8px}
+.baumzeile .knopf{padding:0;font-size:16px}
+.baumzeile .knopf i{margin:0}
+.behalten{color:var(--gut-schrift)}
+.dupzeile{padding:8px 0;display:flex;gap:10px;align-items:center;flex-wrap:wrap;border-top:1px solid var(--linie)}
+.dupzeile:first-of-type{border-top:0}
+.duptext{flex:1;min-width:180px;word-break:break-word}
+.duptext .empfohlen{font-weight:600}
+.knopf.behalt{white-space:nowrap}
+.knopf.behalt.erste{border-color:var(--akzent);color:var(--akzent)}
+.chip.teil{border:2px solid var(--akzent);padding:7px 13px}
+.gewaehlt{display:flex;align-items:center;gap:8px;margin:0 0 10px;font-size:15px}
+.gewaehlt .was{flex:1;min-width:0}
+.tippt{margin-top:12px;font-size:14px;color:var(--leise)}
+.tippt .chips{margin-top:6px}
+#meldung button{margin-left:10px;background:none;border:1px solid currentColor;color:inherit;border-radius:8px;padding:6px 10px;font:inherit}
+.aktionen{display:flex;flex-direction:column;gap:8px;margin:12px 0}
+.aktionen .knopf{text-align:left}
+.hinweis{font-size:13px;color:var(--leise);margin:-2px 0 8px}
+.zweit{margin-top:8px}
+.zweit .chip{font-size:14px}
+#meldung{position:fixed;left:16px;right:16px;max-width:1168px;margin:0 auto;bottom:calc(16px + env(safe-area-inset-bottom));background:var(--text);color:var(--bg);
+  border-radius:12px;padding:12px 14px;font-size:15px;z-index:10;display:none}
+#meldung.an{display:block}
+#meldung i{margin-right:8px}
+/* Feedback beim Weiter: sofort sichtbar, dass etwas passiert (auch wenn Speichern/Laden kurz dauert) */
+#lied.wechselt{opacity:.4;transition:opacity .12s}
+.leiste .los.speichert{opacity:.75;cursor:progress}
+button:disabled{opacity:.5}
+/* Handy: nichts unter 14 px (Guideline G-09, Audit F-13) */
+@media (max-width:600px){.grund,details,.abschnitt,.ebene .titel2,.hinweis{font-size:14px}}
+</style>
+</head>
+<body>
+<nav aria-label="Bereiche">
+  <button data-seite="bewerten" class="an" aria-current="page"><i class="fa-regular fa-circle-play"></i>Bewerten</button>
+  <button data-seite="stand"><i class="fa-regular fa-chart-bar"></i>Stand</button>
+  <button data-seite="genres"><i class="fa-regular fa-folder"></i>Genres</button>
+  <button data-seite="duplikate"><i class="fa-regular fa-copy"></i>Duplikate</button>
+</nav>
+<div class="leiste" id="leiste">
+  <button id="zurueck" class="zurueck" disabled aria-label="Zurück zum letzten Lied" title="Zurück zum letzten Lied"><i class="fa-regular fa-circle-left"></i></button>
+  <button id="skip"><i class="fa-regular fa-circle-right"></i> Später</button>
+  <button id="aehnl"><i class="fa-regular fa-lightbulb"></i> Ähnliche</button>
+  <button id="los" class="los" disabled><i class="fa-regular fa-circle-check"></i> <span id="losText">Weiter</span></button>
+</div>
+
+<main id="bewerten">
+  <section id="fortschritt" class="karte fortschritt" aria-label="Fortschritt des Projekts"></section>
+  <div id="lied" class="karte"><div class="leer">Lade …</div></div>
+  <div class="karte">
+    <input id="suche" class="suche" type="search" placeholder="Genre suchen" aria-label="Genre suchen" autocomplete="off">
+    <div id="chips"></div>
+  </div>
+</main>
+<main id="stand" class="versteckt"></main>
+<main id="genres" class="versteckt"></main>
+<main id="duplikate" class="versteckt"></main>
+
+
+<dialog id="neu" aria-labelledby="neuTitel">
+  <b id="neuTitel">Neues Genre</b>
+  <form id="neuForm"><input id="neuName" type="text" placeholder="Name, z. B. Hypnotic Techno" aria-label="Name des neuen Genres" autocomplete="off" enterkeyhint="done"></form>
+  <div id="namenTreffer"></div>
+  <label class="unter" for="neuEltern">Unter</label>
+  <select id="neuEltern"></select>
+  <input id="neuOber" class="versteckt" type="text" placeholder="Neues Obergenre, z. B. House" aria-label="Name des neuen Obergenres" autocomplete="off" enterkeyhint="done">
+  <div style="display:flex;gap:8px;justify-content:flex-end">
+    <button class="knopf" id="neuAbbr">Abbrechen</button>
+    <button class="knopf" id="neuOk" style="border-color:var(--akzent);color:var(--akzent)">Anlegen</button>
+  </div>
+</dialog>
+<dialog id="waehlDlg" aria-labelledby="waehlTitel"><b id="waehlTitel"></b>
+  <select id="waehlListe" aria-labelledby="waehlTitel"></select>
+  <div style="display:flex;gap:8px;justify-content:flex-end">
+    <button class="knopf" id="waehlAbbr">Abbrechen</button>
+    <button class="knopf" id="waehlOk" style="border-color:var(--akzent);color:var(--akzent)">OK</button>
+  </div>
+</dialog>
+<dialog id="aktionDlg" aria-labelledby="aktionTitel"><b id="aktionTitel"></b>
+  <div class="aktionen">
+    <button class="knopf" data-aktion="umb"><i class="fa-regular fa-pen-to-square"></i>Umbenennen</button>
+    <button class="knopf" data-aktion="versch"><i class="fa-regular fa-share-from-square"></i>Unter ein anderes Genre hängen</button>
+    <button class="knopf" data-aktion="zus"><i class="fa-regular fa-object-group"></i>In ein anderes Genre aufgehen lassen</button>
+  </div>
+  <div style="text-align:right"><button class="knopf" id="aktionZu">Abbrechen</button></div>
+</dialog>
+<dialog id="aehnlDlg" aria-labelledby="aehnlTitel"><b id="aehnlTitel">Klingt ähnlich</b><div id="aehnlListe"></div>
+  <div style="text-align:right;margin-top:10px"><button class="knopf" id="aehnlZu">Schließen</button></div></dialog>
+
+<div id="meldung" role="status"></div>
+<audio id="audio" preload="auto"></audio>
+<audio id="vorhoer" preload="none"></audio>
+<script>
+const $ = s => document.querySelector(s);
+const api = (p, o) => fetch(p, o).then(async r => {
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `Fehler ${r.status}`);
+  return r.json();
+});
+const json = (methode) => (p, b) => api(p, {method: methode, headers: {"Content-Type": "application/json"}, body: JSON.stringify(b)});
+const post = json("POST"), patch = json("PATCH");
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+// Vergleichsform wie auf dem Server: „hardtechno“ findet „Hard Techno“
+const norm = s => String(s).toLowerCase().replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss")
+  .normalize("NFKD").replace(/[^a-z0-9]/g, "");
+const audio = $("#audio");      // nur das aktuelle Lied
+const vorhoer = $("#vorhoer");  // Ähnliche und Duplikate: nie mit dem aktuellen Lied verwechseln
+
+let schlange = [], aktuell = null, genres = [], haupt = null, tags = new Set(), ausschnitt = 0, gestartet = false,
+    offenPfad = [], seite = "bewerten",
+    verlauf = [];  // Zurück-Knopf: zuletzt bewertete/übersprungene Karten mit dem, was gewählt war
+
+// ---- Meldungen statt stiller Fehler
+let meldungZeit = null;
+function melde(text, knopf, aktion, dauer, icon) {
+  const m = $("#meldung");
+  m.textContent = text;
+  if (icon) m.insertAdjacentHTML("afterbegin", `<i class="${icon}"></i>`);
+  if (knopf) {
+    const b = document.createElement("button");
+    b.textContent = knopf;
+    b.onclick = () => { m.classList.remove("an"); aktion(); };
+    m.appendChild(b);
+  }
+  m.classList.add("an");
+  clearTimeout(meldungZeit); meldungZeit = setTimeout(() => m.classList.remove("an"), dauer ?? (knopf ? 8000 : 4000));
+}
+window.addEventListener("unhandledrejection", e => melde(e.reason?.message || "Etwas ging schief"));
+
+// Ein Knopf, eine Aktion: bis zur Antwort gesperrt (kein Doppelspeichern)
+const laeuft = new Set();
+async function einmal(schluessel, fn) {
+  if (laeuft.has(schluessel)) return;
+  laeuft.add(schluessel);
+  try { return await fn(); }
+  catch (e) { melde(e.message); }
+  finally { laeuft.delete(schluessel); }
+}
+
+const GRUND = {
+  gruppe: ["fa-regular fa-folder-open", g => `Neue Klanggruppe · ~${g.gruppe} ähnliche`],
+  unsicher: ["fa-regular fa-circle-question", () => "Was ist das?"],
+  stichprobe: ["fa-regular fa-square-check", () => "Stichprobe: was ist es?"],
+  auffuellen: ["fa-regular fa-square-plus", () => "Mehr Beispiele gesucht"],
+  zufall: ["fa-regular fa-circle-dot", () => "Neu"],
+};
+
+let genresNr = 0;
+async function genresLaden() {
+  // nur die neueste Antwort zählt: eine ältere könnte ein eben angelegtes Genre wieder abwählen (Audit F-20)
+  const nr = ++genresNr;
+  const neu = await api("/api/genres");
+  if (nr !== genresNr) return;
+  genres = neu;
+  // Wahl auf gelöschte/zusammengeführte Genres verwerfen
+  const da = new Set(genres.map(g => g.id));
+  if (haupt !== null && !da.has(haupt)) haupt = null;
+  tags = new Set([...tags].filter(t => da.has(t)));
+  offenPfad = offenPfad.filter(i => da.has(i));
+  // Vorschläge auf gelöschte/zusammengeführte Genres: ist der erste weg, stimmt die Reihenfolge nicht mehr
+  // (der Zweitvorschlag würde sonst unbemerkt zum Daumen). Dann lieber gar kein Vorschlag (Audit F-02).
+  let geaendert = false;
+  for (const k of [aktuell, ...schlange].filter(Boolean)) {
+    const vorher = k.vorschlag.length;
+    k.vorschlag = k.vorschlag.length && !da.has(k.vorschlag[0].id) ? []
+      : k.vorschlag.filter(v => da.has(v.id)).map(v => ({...v, pfad: genres.find(g => g.id === v.id).pfad}));
+    geaendert ||= k === aktuell && k.vorschlag.length !== vorher;
+  }
+  if (geaendert) zeichneLied();
+  zeichneChips();
+}
+
+async function auffuellen() {
+  if (schlange.length >= 2) return;
+  const ohne = [aktuell?.lied_id, ...schlange.map(s => s.lied_id)].filter(Boolean).join(",");
+  const neu = await api(`/api/naechste?anzahl=3&ohne=${ohne}`);
+  for (const n of neu) if (n.lied_id !== aktuell?.lied_id && !schlange.some(s => s.lied_id === n.lied_id)) {
+    // was das Modell beim Laden vorhergesagt hat: zählt für die Stichprobe, auch wenn sich Genres danach ändern
+    n.vorhergesagt = n.vorhergesagt ?? n.vorschlag[0]?.id ?? null;  // bei Stichproben: das geprüfte Genre (auch Obergenre)
+    schlange.push(n);
+    if (!n.lied.direkt) fetch(`/api/snippet/${n.lied_id}`).catch(() => {});  // Ausschnitt vorwärmen (nur ohne Direktwiedergabe)
+  }
+}
+
+const snippetPfad = () => `/api/snippet/${aktuell.lied_id}${ausschnitt ? "?ausschnitt=" + ausschnitt : ""}`;
+// Direkt abspielbare Formate: ganze Datei mit Scrub; sonst (WMA, Ogg …) der erzeugte 30-s-Ausschnitt
+// Startstelle als Medienfragment (#t=…): Safari setzt sie selbst. Ein eigener Sprung vor dem ersten Play hing am
+// iPhone beim ersten Lied und blockierte jeden weiteren Sprung darin (Mitschnitt 24.10.).
+const quellePfad = () => aktuell.lied.direkt ? `/api/datei/${aktuell.lied_id}#t=${Math.round(aktuell.lied.snippet_start || 0)}` : snippetPfad();
+const ohneFragment = u => u.split("#")[0];
+const istQuelle = () => !!aktuell && ohneFragment(audio.src).endsWith(ohneFragment(quellePfad()));
+let ziehen = false, startGeprueft = false;  // Regler wird gerade gezogen; Startstelle schon kontrolliert
+function spiele() {
+  // immer das aktuelle Lied, auch wenn vorher etwas anderes lief
+  if (!aktuell) return;
+  vorhoer.pause();
+  if (!istQuelle()) audio.src = quellePfad();
+  gestartet = true;
+  audio.play().catch(abspielFehler);
+}
+// Abbruch durch Quellwechsel ist normal; alles andere sagt der App Bescheid statt still zu bleiben (Audit F-03)
+function abspielFehler(e) {
+  if (e?.name === "AbortError") return;
+  if (aktuell?.lied.direkt) protokoll("abspielen", {grund: e?.name ?? "fehler"});
+  if (e?.name === "NotAllowedError") melde("Zum Abspielen einmal auf Play tippen.");
+  else melde("Ausschnitt lässt sich nicht abspielen. „Andere Stelle“ oder „Später“ probieren.");
+  const a = $("#anders"); if (a) a.innerHTML = `<i class="fa-regular fa-clock"></i>Andere Stelle`;
+  zeigeAbspielzustand();
+}
+
+let leerTimer = null, ladeFehler = null;
+async function weiter() {
+  clearTimeout(leerTimer);
+  ladeFehler = null;
+  // liegt schon ein Lied bereit, sofort weiter; Nachschub holt der Hintergrund (unten)
+  if (!schlange.length) {
+    try { await auffuellen(); }
+    catch (e) { ladeFehler = e; }
+  }
+  aktuell = schlange.shift() || null;
+  haupt = null; tags = new Set(); ausschnitt = 0;
+  $("#suche").value = "";
+  // Nachladen gescheitert und nichts mehr in der Schlange: Fehler zeigen, nicht „nichts zu bewerten“ (Audit F-04)
+  if (ladeFehler && !aktuell) { zeigeLadeFehler(ladeFehler); return; }
+  if (ladeFehler) melde(ladeFehler.message);
+  zeichneLied();
+  zeichneChips();
+  if (aktuell) {
+    audio.src = quellePfad();
+    startGeprueft = false;
+    if (gestartet && seite === "bewerten") spiele();
+    auffuellen().catch(() => {});
+  } else {
+    audio.pause(); audio.removeAttribute("src");
+    // neue Lieder kommen mit der Analyse; über die Sperre, damit nicht zwei „weiter“ gleichzeitig laufen (Audit F-17)
+    leerTimer = setTimeout(() => einmal("weiter", weiter), 60000);
+  }
+}
+
+function zeigeLadeFehler(e) {
+  audio.pause(); audio.removeAttribute("src");
+  $("#lied").innerHTML = `<div class="leer"><i class="fa-regular fa-circle-xmark"></i> Konnte keine Lieder laden.<br>
+    <span class="unter">${esc(e.message)}</span><br><br>
+    <button class="knopf" id="nochmal"><i class="fa-regular fa-circle-right"></i>Nochmal</button></div>`;
+  $("#nochmal").onclick = () => einmal("weiter", weiter);
+  zeichneChips();
+}
+
+const minSek = t => `${Math.floor(t / 60)}:${String(Math.round(t % 60)).padStart(2, "0")}`;
+// „Andere Stelle“: Startzeit des gerade gespielten Ausschnitts aus der Antwort des Servers (X-Start, aus dem Cache)
+async function ausschnittZeigen() {
+  if (!aktuell || !ausschnitt) return;
+  const src = audio.currentSrc, info = $("#ausschnittInfo");
+  const r = await fetch(src, {cache: "force-cache"}).catch(() => null);
+  const start = r?.ok ? parseFloat(r.headers.get("X-Start")) : NaN;
+  if (info && isFinite(start) && src === audio.currentSrc) info.textContent = `Ausschnitt: Stelle ${ausschnitt + 1} ab ${minSek(start)}`;
+}
+
+// Vorschläge für die Karte (höchstens 4): dein Modell (Platz 1–2 trafen im Test 82 %, n = 114), dazu
+// Genres, deren Name zur Discogs-Erkennung passt (Stil oder Obergenre, z. B. „Rock---Indie Rock“ → Rock;
+// trifft 48 %, bei selten bewerteten Genres 38 %), zuletzt ein erkannter Stil, den es bei dir noch nicht gibt.
+function kandidaten(k, ohne) {
+  const raus = [], da = new Set(ohne != null ? [ohne] : []);
+  const dazu = x => { if (raus.length < 4 && !(x.id != null && da.has(x.id))) { raus.push(x); if (x.id != null) da.add(x.id); } };
+  const nachName = n => genres.filter(g => norm(g.name) === norm(n)).sort((a, b) => (a.eltern_id === null) - (b.eltern_id === null) || b.n - a.n)[0];
+  for (const x of k.vorschlag) if (x.p >= 0.1) dazu({id: x.id, pfad: x.pfad, p: x.p, quelle: "modell"});
+  let fehlt = null;
+  (k.lied.discogs || []).forEach(([stil, wert], i) => {
+    const [ober, blatt] = stil.split("---");
+    const g = nachName(blatt) ?? nachName(ober);
+    if (g) dazu({id: g.id, p: wert, quelle: "discogs"});
+    // erkannter Top-Stil, den es bei dir noch nicht gibt (auch wenn sein Obergenre schon da ist): zum Anlegen anbieten
+    if (i === 0 && blatt && !nachName(blatt)) fehlt = {name: blatt, ober, p: wert, quelle: "discogs"};
+  });
+  // Anlegen nur anbieten, wenn dein Modell nicht sicher ist (sonst stünde z. B. „+ Spoken Word“ neben „Hörbuch“)
+  if (fehlt && ohne == null) dazu(fehlt);
+  return raus;
+}
+
+function zeichneLied() {
+  const box = $("#lied");
+  if (!aktuell) {
+    box.innerHTML = `<div class="leer"><i class="fa-regular fa-hourglass-half"></i> Gerade nichts zu bewerten.<br>
+      <span class="unter">Neue Lieder kommen, während die Analyse läuft.</span><br><br>
+      <button class="knopf" id="nochmal"><i class="fa-regular fa-circle-right"></i>Neu laden</button></div>`;
+    $("#nochmal").onclick = () => einmal("weiter", weiter);
+    return;
+  }
+  const l = aktuell.lied, [icon, text] = GRUND[aktuell.grund] || GRUND.zufall;
+  const name = l.interpret && l.titel ? `${l.interpret} – ${l.titel}` : l.dateiname;
+  // Bei Stichproben kein Vorschlag: sonst bestätigt man ihn eher und die Prüfung wird geschönt
+  const zeigeVorschlag = aktuell.grund !== "stichprobe";
+  const [v, v2] = zeigeVorschlag ? aktuell.vorschlag : [];
+  const pz = x => `<span class="unter">${Math.round(x.p * 100)} %</span>`;
+  // Eine Reihe mit den besten Vorschlägen, egal von welchem Modell: erst dein Modell, dann die Discogs-Erkennung
+  const k = zeigeVorschlag ? kandidaten(aktuell, v && sicher(v, v2) ? v.id : null) : [];
+  // Prozent an jedem Vorschlag (dein Modell bzw. allgemeine Klang-Erkennung; die Quelle steht im aria-label)
+  const prozent = x => x.p == null ? "" : ` <span class="unter">${Math.round(x.p * 100)} %</span>`;
+  const label = x => x.p == null ? "" : ` aria-label="${esc(x.id != null ? genreVon(x.id)?.pfad ?? x.pfad : x.name)}, ${
+    x.quelle === "discogs" ? "Klang-Erkennung" : "dein Modell"} ${Math.round(x.p * 100)} Prozent"`;
+  const reihe = k.map(x => x.id != null
+    ? `<button class="chip" data-id="${x.id}"${label(x)}>${esc(genreVon(x.id)?.pfad ?? x.pfad)}${prozent(x)}</button>`
+    : `<button class="chip neu" data-neu="${esc(x.name)}" data-ober="${esc(x.ober)}"${label(x)}><i class="fa-regular fa-square-plus"></i> ${esc(x.name)}${prozent(x)}</button>`).join("");
+  // Daumen nur bei klarem Vorschlag deines Modells (übernimmt „Weiter“ oben)
+  const vorschlag = (v && sicher(v, v2) ? `<div class="vorschlagzeile">
+      <button class="vorschlag" id="vorschlag"><i class="fa-regular fa-thumbs-up"></i> ${esc(v.pfad)} ${pz(v)}</button></div>` : "")
+    + (reihe ? `<div class="tippt">${v && sicher(v, v2) ? "Oder" : "Vorschläge"}<div class="chips zweit">${reihe}</div></div>` : "");
+  box.innerHTML = `
+    <div class="grund"><i class="${icon}"></i>${esc(text(aktuell))}</div>
+    <div class="titelzeile"><div class="titel">${esc(name)}</div>
+      <button class="stern${l.stern ? " an" : ""}" id="stern" aria-pressed="${l.stern}" aria-label="Favorit"
+        title="Favorit (Taste S)"><i class="fa-regular fa-star"></i></button></div>
+    <div class="unter">${[l.sprache, l.format, l.bitrate && l.bitrate + " kbit/s", l.bpm && l.bpm + " BPM"].filter(Boolean).map(esc).join(" · ")}</div>
+    ${zeigeVorschlag && l.discogs.length ? `<div class="unter" id="hoert">Modell hört: ${l.discogs.slice(0, 3)
+      .map(d => esc(d[0].split("---")[1]) + " " + Math.round(d[1] * 100) + " %").join(", ")}</div>` : ""}
+    <div class="spieler">
+      <button class="play" id="play" aria-label="Abspielen"><i class="fa-regular fa-circle-play"></i></button>
+      ${l.direkt ? `<div class="scrub"><div class="spur" id="scrub" role="slider" tabindex="0" aria-label="Stelle im Lied"
+          aria-valuemin="0" aria-valuemax="${Math.max(1, Math.round(l.dauer || 0))}" aria-valuenow="${Math.round(l.snippet_start || 0)}">
+          <div class="gespielt"></div><div class="griff"></div></div><div class="zeit" id="zeit"></div></div>`
+        : `<div class="balken"><div id="fort"></div></div>
+      <button class="knopf" id="anders"><i class="fa-regular fa-clock"></i>Andere Stelle</button>`}
+    </div>
+    ${vorschlag}
+    <details><summary><i class="fa-regular fa-circle-question"></i> Details</summary>
+      <div>${esc(l.pfad)}</div>
+      <div>Album: ${esc(l.album || "–")} · Tag-Genre: ${esc(l.tag_genre || "–")}</div>
+      <div id="ausschnittInfo">Ausschnitt: ${esc(l.snippet_quelle)} ab ${minSek(l.snippet_start)}</div>
+      <div>Prozent bei Vorschlägen: zuerst dein Modell (wie sicher es sich ist), dahinter die allgemeine Klang-Erkennung (ein anderer, nicht vergleichbarer Wert).</div>
+    </details>`;
+  $("#play").onclick = () => { if (!audio.paused && istQuelle()) audio.pause(); else spiele(); };
+  if ($("#scrub")) scrubEinrichten($("#scrub"));
+  if ($("#anders")) $("#anders").onclick = () => {
+    ausschnitt = ausschnitt % 5 + 1; spiele();  // 5 weitere Ausschnitte, dann wieder von vorn
+    $("#anders").innerHTML = `<i class="fa-regular fa-hourglass-half"></i>Lädt`;
+    fetch(`/api/snippet/${aktuell.lied_id}?ausschnitt=${ausschnitt % 5 + 1}`).catch(() => {});  // nächsten vorwärmen
+  };
+  $("#stern").onclick = sternUmschalten;
+  if ($("#vorschlag")) $("#vorschlag").onclick = () => waehle(v.id);
+  box.querySelectorAll(".zweit [data-id]").forEach(b => b.onclick = () => waehle(+b.dataset.id));
+  box.querySelectorAll(".zweit [data-neu]").forEach(b => b.onclick = () => neuDialog(b.dataset.neu, b.dataset.ober));
+  zeigeAbspielzustand();
+}
+
+// Favorit: sofort anzeigen, dann speichern; klappt das nicht, zurückdrehen und melden
+function sternUmschalten() {
+  if (!aktuell) return;
+  const k = aktuell, an = !k.lied.stern;
+  const zeigen = wert => { const b = $("#stern"); if (b && aktuell === k) { b.classList.toggle("an", wert); b.setAttribute("aria-pressed", wert); } };
+  k.lied.stern = an; zeigen(an);
+  einmal("stern" + k.lied_id, async () => {
+    try { await post("/api/stern", {lied_id: k.lied_id, an}); melde(an ? "Favorit gemerkt" : "Favorit entfernt", null, null, 1500); }
+    catch (e) { k.lied.stern = !an; zeigen(!an); throw e; }
+  });
+}
+
+function waehle(id) {
+  if (haupt === id) {  // Hauptgenre abgewählt: der erste Zusatz rückt nach
+    const [erster] = tags;
+    haupt = erster ?? null;
+    if (erster !== undefined) tags.delete(erster);
+  }
+  else if (haupt === null) { haupt = id; tags.delete(id); }
+  else if (tags.has(id)) { tags.delete(id); }
+  else { tags.add(id); }
+  zeichneChips();
+}
+
+const kinderVon = id => genres.filter(g => g.eltern_id === id).sort((a, b) => b.n - a.n || a.name.localeCompare(b.name));
+function vorfahren(id) {
+  const erg = new Set();
+  for (let e = genreVon(id)?.eltern_id; e != null && !erg.has(e); e = genreVon(e)?.eltern_id) erg.add(e);
+  return erg;
+}
+const klasse = id => {
+  if (id === haupt) return "haupt";
+  if (tags.has(id)) return "tag";
+  // darunter ist etwas gewählt (z. B. im zugeklappten Zweig)
+  return [haupt, ...tags].some(w => w !== null && vorfahren(w).has(id)) ? "teil" : "";
+};
+const ROLLE = {haupt: "Genre", tag: "Zusatz", teil: "darunter gewählt"};
+const chip = (g, text) => { const k = klasse(g.id);
+  return `<button class="chip ${k}" data-id="${g.id}" aria-pressed="${k === "haupt" || k === "tag"}"${k ? ` aria-label="${esc(text ?? g.pfad)}, ${ROLLE[k]}"` : ""}>${esc(text ?? g.pfad)}</button>`; };
+
+function knoten(g) {
+  // Genre mit Unter-Genres: Name wählt aus, „›“ klappt die nächste Ebene auf
+  const k = kinderVon(g.id).length;
+  if (!k) return chip(g, g.name);
+  const offen = offenPfad.includes(g.id);
+  return `<span class="gruppe">${chip(g, g.name)}<button class="chip auf ${offen ? "offen" : ""}" data-auf="${g.id}" aria-label="Unter-Genres von ${esc(g.name)}" aria-expanded="${offen}">› ${k}</button></span>`;
+}
+
+const VORSCHLAG_AB = 0.5;  // darunter kein Daumen und kein „Weiter“ für den Vorschlag
+const sicher = (v, v2) => v && v.p >= VORSCHLAG_AB && (!v2 || v.p - v2.p >= 0.15);
+const vorschlagId = () => (aktuell && aktuell.grund !== "stichprobe" && sicher(...aktuell.vorschlag)) ? aktuell.vorschlag[0].id : null;
+const genreVon = id => genres.find(g => g.id === id);
+
+function zeichneChips() {
+  const q = norm($("#suche").value.trim());
+  const roh = $("#suche").value.trim();
+  const neu = `<button class="chip" id="neuKnopf"><i class="fa-regular fa-square-plus"></i> Neu${roh ? ": " + esc(roh) : ""}</button>`;
+  let html = haupt === null && !tags.size ? `<div class="hinweis">Erste Wahl = Genre (Ordner) · weitere Wahl = Zusatz</div>`
+    : `<div class="gewaehlt"><div class="was"><b>${esc(genreVon(haupt)?.pfad ?? "–")}</b>${tags.size ? ` <span class="unter">+ ${[...tags].map(t => esc(genreVon(t)?.name)).join(", ")}</span>` : ""}</div>
+       <button class="knopf" id="leeren" aria-label="Auswahl leeren"><i class="fa-regular fa-circle-xmark" style="margin:0"></i></button></div>`;
+  if (q) {
+    // Suche: flache Liste mit vollem Pfad
+    html += `<div class="chips">${genres.filter(g => norm(g.pfad).includes(q)).map(g => chip(g)).join("")}${neu}</div>`;
+  } else {
+    // Lieder kommen zufällig: das zuletzt Gewählte sagt nichts übers nächste, die Häufigkeit schon
+    const haeufig = genres.filter(g => g.n).sort((a, b) => b.n - a.n).slice(0, 6);
+    html += haeufig.length ? `<div class="abschnitt">Häufig</div><div class="chips">${haeufig.map(g => chip(g)).join("")}</div>` : "";
+    html += `<div class="abschnitt">Alle</div><div class="chips">${kinderVon(null).map(knoten).join("")}${neu}</div>`;
+    // aufgeklappte Ebenen untereinander, jede mit ihrem Pfad als Überschrift
+    for (const id of offenPfad) {
+      const g = genres.find(x => x.id === id);
+      if (!g) break;
+      html += `<div class="ebene"><div class="titel2">${esc(g.pfad)} ›</div><div class="chips">${kinderVon(id).map(knoten).join("")}</div></div>`;
+    }
+  }
+  $("#chips").innerHTML = html;
+  $("#chips").querySelectorAll("[data-id]").forEach(b => b.onclick = () => waehle(+b.dataset.id));
+  $("#chips").querySelectorAll("[data-auf]").forEach(b => b.onclick = () => aufklappen(+b.dataset.auf));
+  $("#neuKnopf").onclick = () => neuDialog();
+  if ($("#leeren")) $("#leeren").onclick = () => { haupt = null; tags = new Set(); zeichneChips(); };
+  // ohne eigene Wahl übernimmt „Weiter“ einen klaren Vorschlag, und sagt das auch
+  const vid = vorschlagId();
+  $("#los").disabled = !aktuell || (haupt === null && vid === null);
+  $("#losText").textContent = haupt === null && vid !== null ? `Weiter: ${genreVon(vid)?.name ?? ""}` : "Weiter";
+  const vb = $("#vorschlag"); if (vb && aktuell?.vorschlag[0]) vb.classList.toggle("an", aktuell.vorschlag[0].id === haupt);
+  document.querySelectorAll(".zweit [data-id]").forEach(b => b.classList.toggle("haupt", +b.dataset.id === haupt));
+}
+
+function aufklappen(id) {
+  // Pfad bis zum Elternteil behalten, dann id öffnen oder (falls offen) schließen
+  const g = genres.find(x => x.id === id);
+  const kette = [];
+  for (let e = g?.eltern_id; e != null; e = genres.find(x => x.id === e)?.eltern_id) kette.unshift(e);
+  offenPfad = offenPfad.includes(id) ? kette : [...kette, id];
+  zeichneChips();
+}
+
+function zweig(id) {
+  // id und alles darunter
+  const erg = new Set([id]);
+  for (let i = 0, offen = [id]; i < offen.length; i++) kinderVon(offen[i]).forEach(k => { erg.add(k.id); offen.push(k.id); });
+  return erg;
+}
+
+function elternAuswahl(ausser) {
+  // ausser: Genre-ID, deren Zweig nicht als Ziel taugt (Verschieben unter sich selbst)
+  const verboten = ausser != null ? zweig(ausser) : new Set();
+  return `<option value="">– oberste Ebene –</option>` + [...genres].filter(g => !verboten.has(g.id))
+    .sort((a, b) => a.pfad.localeCompare(b.pfad)).map(g => `<option value="${g.id}">${esc(g.pfad)}</option>`).join("");
+}
+
+const NEU_OBER = "neu";
+function oberFeld(name) {
+  // „+ Neues Obergenre …“ gewählt: Namensfeld zeigen (vorbefüllt, wenn bekannt)
+  const neu = $("#neuEltern").value === NEU_OBER;
+  $("#neuOber").classList.toggle("versteckt", !neu);
+  if (name != null) $("#neuOber").value = name;
+  if (neu && !$("#neuOber").value) $("#neuOber").focus();
+}
+$("#neuEltern").onchange = () => oberFeld();
+
+function neuDialog(name, ober) {
+  // aus einem Vorschlag der Erkennung (name, ober) oder aus der Suche
+  $("#neuName").value = typeof name === "string" ? name : $("#suche").value.trim();
+  $("#neuEltern").innerHTML = elternAuswahl(null) + `<option value="${NEU_OBER}">+ Neues Obergenre …</option>`;
+  $("#neuOber").value = "";
+  oberFeld();
+  // im aufgeklappten Zweig anlegen: der liegt meist nahe
+  if (offenPfad.length) $("#neuEltern").value = String(offenPfad[offenPfad.length - 1]);
+  if (typeof ober === "string" && ober) obergenreSetzen(ober);
+  $("#namenTreffer").innerHTML = ""; delete $("#namenTreffer").dataset.html;
+  $("#neu").showModal();
+  $("#neuName").focus();
+  namenPruefen();
+}
+
+function obergenreSetzen(name) {
+  const passend = genres.filter(g => norm(g.name) === norm(name));
+  const ober = passend.find(g => g.eltern_id === null) ?? passend[0];
+  if (ober) { $("#neuEltern").value = String(ober.id); oberFeld(""); }
+  else { $("#neuEltern").value = NEU_OBER; oberFeld(name); }
+}
+
+let namenZeit = null, namenNr = 0;
+function namenPruefen() {
+  clearTimeout(namenZeit);
+  namenZeit = setTimeout(async () => {
+    const q = $("#neuName").value.trim(), nr = ++namenNr;
+    if (!q) { $("#namenTreffer").innerHTML = ""; delete $("#namenTreffer").dataset.html; return; }
+    const t = await api(`/api/namen?q=${encodeURIComponent(q)}`).catch(() => null);
+    if (!t || nr !== namenNr) return;  // ältere Antwort ignorieren
+    let html = t.warnung ? `<div class="warnung"><i class="fa-regular fa-circle-question"></i> ${esc(t.warnung)}</div>` : "";
+    if (t.vorhanden.length) html += `<div class="abschnitt">Schon da: antippen zum Nehmen</div><div class="chips treffer">${
+      t.vorhanden.map(g => `<button class="chip" data-nimm="${g.id}">${esc(g.pfad)}</button>`).join("")}</div>`;
+    if (t.discogs.length) html += `<div class="abschnitt">Übliche Namen</div><div class="chips treffer">${
+      t.discogs.map(d => `<button class="chip" data-name="${esc(d.name)}" data-ober="${esc(d.obergenre)}">${esc(d.name)} <span class="unter">· ${esc(d.obergenre)}</span></button>`).join("")}</div>`;
+    if ($("#namenTreffer").dataset.html === html) return;  // gleich geblieben: Knöpfe stehen lassen (Tipp geht nicht verloren)
+    $("#namenTreffer").dataset.html = html;
+    $("#namenTreffer").innerHTML = html;
+    $("#namenTreffer").querySelectorAll("[data-nimm]").forEach(b => b.onclick = () => {
+      $("#neu").close(); $("#suche").value = ""; waehle(+b.dataset.nimm);
+    });
+    $("#namenTreffer").querySelectorAll("[data-name]").forEach(b => b.onclick = () => {
+      $("#neuName").value = b.dataset.name;
+      // Der Vorschlag nennt sein Obergenre („Country Rock · Rock“): das wird immer übernommen, auch wenn unter
+      // „Unter“ schon etwas stand (aufgeklappter Zweig, vorher getippter Vorschlag). Gibt es das Obergenre schon,
+      // wird es gewählt (oberste Ebene bevorzugt), sonst als neues Obergenre vorbereitet.
+      obergenreSetzen(b.dataset.ober);
+      namenPruefen();
+    });
+  }, 200);
+}
+$("#neuName").oninput = namenPruefen;
+$("#neuAbbr").onclick = () => $("#neu").close();
+const anlegen = () => einmal("anlegen", async () => {
+  const name = $("#neuName").value.trim(); if (!name) return;
+  const e = $("#neuEltern").value, oberName = $("#neuOber").value.trim();
+  if (e === NEU_OBER && !oberName) { $("#neuOber").focus(); return; }
+  const r = await post("/api/genres", e === NEU_OBER ? {name, eltern_name: oberName} : {name, eltern_id: e ? +e : null});
+  $("#neu").close(); $("#suche").value = "";
+  await genresLaden();
+  const g = genreVon(r.id);
+  if (haupt === null || vorfahren(r.id).has(haupt)) { tags.delete(r.id); haupt = r.id; }
+  else if (haupt !== r.id && !tags.has(r.id)) melde(`„${g.pfad}“ angelegt. Antippen, um es dazuzunehmen.`);
+  if (g?.eltern_id != null) aufklappen(g.eltern_id); else zeichneChips();
+});
+$("#neuOk").onclick = anlegen;
+$("#neuForm").onsubmit = ev => { ev.preventDefault(); anlegen(); };
+$("#neuOber").onkeydown = ev => { if (ev.key === "Enter") { ev.preventDefault(); anlegen(); } };  // Return auf der iPhone-Tastatur
+
+$("#suche").oninput = zeichneChips;
+$("#los").onclick = () => speichern(true);
+
+function wechselAnzeigen(an, text) {
+  // Sofort-Rückmeldung: Knopf zeigt „Speichert …“, Karte blendet ab, bis das nächste Lied steht
+  $("#lied").classList.toggle("wechselt", an);
+  $("#los").classList.toggle("speichert", an);
+  if (an) {
+    $("#los").disabled = true;
+    $("#los").querySelector("i").className = "fa-regular fa-hourglass-half";
+    $("#losText").textContent = text;
+  } else {
+    $("#los").querySelector("i").className = "fa-regular fa-circle-check";
+    zeichneChips();  // setzt Text und Sperre des Knopfs wieder passend
+  }
+}
+
+function speichern(vorschlagNehmen) {
+  return einmal("weiter", async () => {
+    if (!aktuell) return;
+    const h = haupt ?? (vorschlagNehmen ? vorschlagId() : null);
+    if (h === null) return;
+    const name = genreVon(h)?.pfad ?? "";
+    wechselAnzeigen(true, "Speichert …");
+    let r;
+    const karte = aktuell;
+    try { r = await speichernUndWeiter(h); }
+    finally { wechselAnzeigen(false); }
+    // Stichprobe: erst jetzt verraten, was das Modell gesagt hätte (vorher würde es die Wahl beeinflussen)
+    // Bei groben Stichproben (Obergenre) zusätzlich den feinen Tipp nennen; er zählt nicht für die Prüfung
+    const sp = r?.stichprobe, fein = karte?.vorschlag?.[0]?.pfad;
+    const tipp = sp && fein && fein !== sp.modell
+      ? ` · genauer Tipp: ${fein.startsWith(sp.modell + " › ") ? fein.slice(sp.modell.length + 3) : fein}` : "";
+    if (sp?.richtig) melde(`Stichprobe richtig: ${sp.modell}${tipp}`, null, null, 3500, "fa-regular fa-circle-check");
+    else if (sp) melde(`Stichprobe daneben: Modell sagte ${sp.modell}${tipp}`, null, null, 4500, "fa-regular fa-circle-xmark");
+    else melde(`Gespeichert: ${name}`, null, null, 1500);
+    if (++gespeichertSeitFortschritt % 5 === 0) fortschrittZeigen().catch(() => {});
+  });
+}
+
+async function speichernUndWeiter(h) {
+  // Stichprobe: dem Genre zurechnen, das das Modell beim Laden vorhergesagt hat (gibt es das nicht mehr,
+  // verwirft der Server sie, statt sie einem falschen Genre zuzurechnen)
+  let r;
+  try {
+    r = await post("/api/bewerten", {lied_id: aktuell.lied_id, haupt: h, tags: [...tags].filter(t => t !== h),
+      stichprobe: aktuell.grund === "stichprobe", vorschlag_id: aktuell.vorhergesagt ?? null});
+  } catch (e) {
+    genresLaden().catch(() => {});  // z. B. Genre inzwischen zusammengeführt: Auswahl auffrischen (Audit F-18)
+    throw e;
+  }
+  merken(r.rueck_id, h);
+  await weiter();
+  genresLaden().catch(() => {});
+  return r;
+}
+
+function merken(rueckId, h) {
+  verlauf.push({rueck_id: rueckId, karte: aktuell, haupt: h, tags: [...tags]});
+  if (verlauf.length > 20) verlauf.shift();
+  $("#zurueck").disabled = false;
+}
+
+// Zurück: letzte Bewertung bzw. „Später“ zurücknehmen und die Karte mit der damaligen Auswahl wieder zeigen
+$("#zurueck").onclick = () => einmal("weiter", async () => {
+  const z = verlauf.pop();
+  if (!z) return;
+  wechselAnzeigen(true, "Zurück …");
+  try {
+    await post("/api/rueckgaengig", {rueck_id: z.rueck_id});
+    if (aktuell) schlange.unshift(aktuell);
+    aktuell = z.karte;
+    haupt = z.haupt; tags = new Set(z.tags); ausschnitt = 0;
+    $("#suche").value = "";
+    zeichneLied();
+    audio.src = quellePfad();
+    startGeprueft = false;
+    if (gestartet && seite === "bewerten") spiele();
+  } catch (e) {
+    if (!/nicht mehr/.test(e.message)) verlauf.push(z);  // Netzfehler: nochmal versuchen können
+    throw e;
+  } finally {
+    $("#zurueck").disabled = !verlauf.length;
+    wechselAnzeigen(false);  // zeichnet die Auswahl neu
+  }
+});
+$("#skip").onclick = () => einmal("weiter", async () => {
+  if (!aktuell) return;
+  wechselAnzeigen(true, "Später …");
+  try {
+    const r = await post("/api/ueberspringen", {lied_id: aktuell.lied_id});
+    merken(r.rueck_id, null);
+    await weiter();
+  } finally { wechselAnzeigen(false); }
+});
+
+// Am PC: Enter = Weiter (nicht beim Tippen in einem Feld und nicht bei offenem Dialog)
+document.addEventListener("keydown", ev => {
+  if ((ev.key === "s" || ev.key === "S") && !ev.repeat && seite === "bewerten" && !ev.metaKey && !ev.ctrlKey && !ev.altKey
+      && !ev.target.closest("input, textarea, select, [contenteditable]") && !document.querySelector("dialog[open]")) {
+    ev.preventDefault(); sternUmschalten(); return;
+  }
+  if (ev.key !== "Enter" || ev.repeat || seite !== "bewerten") return;
+  if (ev.target.closest("input, textarea, select, button, [contenteditable]")) return;
+  if (document.querySelector("dialog[open]") || $("#los").disabled) return;
+  ev.preventDefault();
+  speichern(true);
+});
+
+let vorhoerId = null;
+function vorhoeren(id) {
+  if (String(vorhoerId) === String(id) && !vorhoer.paused) { vorhoer.pause(); return; }
+  audio.pause();
+  vorhoerId = id;
+  vorhoer.src = `/api/snippet/${id}`;
+  vorhoer.play().catch(e => { if (e?.name !== "AbortError") { melde("Ausschnitt lässt sich nicht abspielen."); zeigeVorhoer("aus"); } });
+  zeigeVorhoer("lädt");
+}
+function zeigeVorhoer(zustand) {
+  document.querySelectorAll("[data-hoer]").forEach(b => {
+    const ich = b.dataset.hoer === String(vorhoerId);
+    const z = !ich ? "aus" : zustand;
+    b.innerHTML = `<i class="fa-regular ${z === "lädt" ? "fa-hourglass-half" : z === "spielt" ? "fa-circle-pause" : "fa-circle-play"}" style="margin:0"></i>`;
+  });
+}
+vorhoer.onplaying = () => zeigeVorhoer("spielt");
+vorhoer.onwaiting = () => zeigeVorhoer("lädt");
+vorhoer.onpause = vorhoer.onended = () => zeigeVorhoer("aus");
+vorhoer.onerror = () => { if (vorhoer.getAttribute("src")) { melde("Ausschnitt lässt sich nicht abspielen."); zeigeVorhoer("aus"); } };
+let liefVorAehnliche = false;
+$("#aehnl").onclick = () => einmal("aehnl", async () => {
+  if (!aktuell) return;
+  liefVorAehnliche = !audio.paused;
+  const l = await api(`/api/aehnliche/${aktuell.lied_id}`);
+  $("#aehnlListe").innerHTML = l.length ? l.map(x => `<div class="zeile"><div>${esc(x.interpret && x.titel ? x.interpret + " – " + x.titel : x.dateiname)}
+     <div class="mini"><div style="width:${Math.max(0, x.aehnlichkeit) * 100}%"></div></div></div>
+     <button class="knopf" data-hoer="${x.id}" aria-label="${esc(x.interpret && x.titel ? x.interpret + " – " + x.titel : x.dateiname)} anhören"><i class="fa-regular fa-circle-play" style="margin:0"></i></button></div>`).join("")
+    : '<div class="leer">Noch zu wenig analysiert</div>';
+  $("#aehnlListe").querySelectorAll("[data-hoer]").forEach(b => b.onclick = () => vorhoeren(b.dataset.hoer));
+  $("#aehnlDlg").showModal();
+});
+$("#aehnlZu").onclick = () => $("#aehnlDlg").close();
+// Tipp neben einen Dialog (auf den abgedunkelten Hintergrund) schließt ihn
+document.querySelectorAll("dialog").forEach(d => d.addEventListener("click", ev => {
+  const r = d.getBoundingClientRect();  // nur außerhalb des Kastens, nicht auf dessen Rand
+  if (ev.target === d && (ev.clientX < r.left || ev.clientX > r.right || ev.clientY < r.top || ev.clientY > r.bottom)) d.close();
+}));
+$("#aktionZu").onclick = () => $("#aktionDlg").close();
+$("#aehnlDlg").addEventListener("close", () => {
+  vorhoer.pause();
+  if (liefVorAehnliche && seite === "bewerten") spiele();  // weiter, wo es war
+});
+
+// ---- Scrub-Leiste: Tippen springt, Ziehen zeigt die Stelle, Loslassen springt (Pointer-Ereignisse: Maus und Finger)
+const scrubMax = () => +($("#scrub")?.getAttribute("aria-valuemax") || 1);
+function zeitZeigen(t) {
+  const z = $("#zeit"), sc = $("#scrub"); if (!z || !sc) return;
+  const max = scrubMax(), anteil = Math.min(1, Math.max(0, t / max)) * 100;
+  sc.querySelector(".gespielt").style.width = anteil + "%";
+  sc.querySelector(".griff").style.left = anteil + "%";
+  sc.setAttribute("aria-valuenow", Math.round(t));
+  sc.setAttribute("aria-valuetext", `${minSek(t)} von ${minSek(max)}`);
+  z.textContent = `${minSek(t)} / ${minSek(max)}`;
+}
+function scrubEinrichten(sc) {
+  zeitZeigen(+sc.getAttribute("aria-valuenow"));
+  const stelle = e => { const r = sc.getBoundingClientRect(); return Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)) * scrubMax(); };
+  let wert = null;
+  sc.onpointerdown = e => { ziehen = true; sc.setPointerCapture?.(e.pointerId); wert = stelle(e); zeitZeigen(wert); };
+  sc.onpointermove = e => { if (ziehen) { wert = stelle(e); zeitZeigen(wert); } };
+  sc.onpointerup = () => { if (ziehen && wert != null) springen(wert); ziehen = false; wert = null; };
+  sc.onpointercancel = () => { ziehen = false; wert = null; };
+  // iPhone: Abspielen ist nur aus touchend/click heraus erlaubt, nicht aus pointerup. Ohne Abspielen schließt Safari
+  // den Sprung bei pausiertem Lied nicht ab (Mitschnitt 24.10.: „pausiert, springt“ nach 10 s, Datei ganz geladen).
+  const anstossen = () => { if (aktuell && audio.paused) spiele(); };
+  sc.addEventListener("touchend", anstossen);
+  sc.addEventListener("click", anstossen);
+  sc.onkeydown = e => {  // Tastatur/VoiceOver: ±10 s
+    const d = {ArrowRight: 10, ArrowUp: 10, ArrowLeft: -10, ArrowDown: -10}[e.key];
+    if (d) { e.preventDefault(); springen(Math.min(scrubMax(), Math.max(0, (audio.currentTime || 0) + d))); }
+  };
+}
+// ---- Springen. Safari nimmt einen Sprung oft erst an, wenn genug geladen ist: dann bei canplay/progress nochmal.
+let sprungZiel = null, sprungVersuche = 0, sprungUhr = null, sprungArt = null;  // „start“ oder „scrub“
+function springen(t) {
+  if (!aktuell?.lied.direkt) return;
+  if (!istQuelle()) audio.src = quellePfad();
+  sprungZiel = t; sprungVersuche = 0; sprungArt = "scrub";
+  zeitZeigen(t);
+  sprungVersuchen();
+  spiele();
+  clearTimeout(sprungUhr);  // nach 10 s ohne Erfolg aufgeben und melden
+  sprungUhr = setTimeout(() => { if (sprungZiel === t) sprungAufgeben("zeit"); }, 10000);
+  // Wächter: Safari bleibt manchmal mitten im Sprung hängen (seeking, obwohl alles geladen ist).
+  // Stufe 1 nach 1,5 s: neu setzen. Stufe 2 nach 4 s: Lied an genau dieser Stelle neu laden.
+  setTimeout(() => {
+    if (sprungZiel !== t || !audio.seeking) return;
+    protokoll("haengt", {stufe: 1});
+    audio.currentTime = t + 0.01;
+    if (audio.paused) spiele();
+  }, 1500);
+  setTimeout(() => {
+    if (sprungZiel !== t || !audio.seeking) return;
+    protokoll("haengt", {stufe: 2});
+    audio.src = `${ohneFragment(quellePfad())}#t=${Math.round(t)}`;
+    audio.play().catch(abspielFehler);
+  }, 4000);
+}
+const springbar = t => { for (let i = 0; i < audio.seekable.length; i++)
+  if (t >= audio.seekable.start(i) - 1 && t <= audio.seekable.end(i) + 1) return true; return false; };
+function sprungAufgeben(anlass) {
+  protokoll("sprung", {ok: false, anlass, art: sprungArt}); sprungZiel = null;
+  melde("Springen hat nicht geklappt. Nochmal versuchen.");
+}
+function sprungVersuchen() {
+  if (sprungZiel == null) return;
+  if (audio.readyState < 1) return;  // erst nach den Metadaten möglich; loadedmetadata versucht es erneut
+  sprungVersuche++;
+  audio.currentTime = sprungZiel;
+}
+function sprungPruefen(anlass) {
+  if (sprungZiel == null) return;
+  // erst abgeschlossen, wenn nicht mehr gesprungen wird: Safari meldet die Zielzeit schon, während es noch hängt
+  if (Math.abs(audio.currentTime - sprungZiel) < 2 && !audio.seeking) {
+    if (sprungArt === "scrub") protokoll("sprung", {ok: true, anlass});  // Start-Sprünge nur bei Fehlern melden
+    sprungZiel = null; clearTimeout(sprungUhr); return;
+  }
+  // neu versuchen nur, wenn die Stelle jetzt springbar ist (sonst verbrauchen häufige progress-Ereignisse die Versuche)
+  // und gerade kein Sprung läuft (ein neuer würde ihn nur zurücksetzen; einen Hänger löst der Wächter)
+  if (audio.readyState >= 1 && springbar(sprungZiel) && !audio.seeking) {
+    if (sprungVersuche < 4) sprungVersuchen(); else sprungAufgeben(anlass);
+  }
+}
+// Rückfall, falls das Gerät das Medienfragment nicht kennt: beim ersten Abspielen zur Startstelle
+audio.addEventListener("playing", () => {
+  if (startGeprueft || !aktuell?.lied.direkt) return;
+  startGeprueft = true;
+  const start = aktuell.lied.snippet_start || 0;
+  if (sprungZiel == null && start > 2 && audio.currentTime < start - 2) audio.currentTime = start;
+});
+audio.addEventListener("loadedmetadata", () => sprungVersuchen());
+audio.addEventListener("canplay", () => sprungPruefen("canplay"));
+audio.addEventListener("seeked", () => sprungPruefen("seeked"));
+audio.addEventListener("progress", () => sprungPruefen("progress"));
+
+// Was das Gerät beim Abspielen/Springen tut, an den Server melden (zur Fehlersuche am iPhone; nur kurze Messwerte)
+function protokoll(ereignis, extra = {}) {
+  const b = [];
+  for (let i = 0; i < audio.seekable.length; i++) b.push([Math.round(audio.seekable.start(i)), Math.round(audio.seekable.end(i))]);
+  const daten = {ereignis, lied: aktuell?.lied_id ?? null, ziel: sprungZiel == null ? null : Math.round(sprungZiel),
+    jetzt: Math.round(audio.currentTime || 0), bereit: audio.readyState, netz: audio.networkState, springbar: b,
+    versuche: sprungVersuche, fehler: audio.error?.code ?? null, pausiert: audio.paused, springt: audio.seeking,
+    geladen: [...Array(audio.buffered.length).keys()].map(i => [Math.round(audio.buffered.start(i)), Math.round(audio.buffered.end(i))]),
+    ...extra};
+  fetch("/api/protokoll", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(daten), keepalive: true}).catch(() => {});
+}
+
+function zeigeAbspielzustand(laedt) {
+  const p = $("#play i"), spielt = !audio.paused && aktuell && istQuelle();
+  if (p) p.className = "fa-regular " + (laedt && spielt ? "fa-hourglass-half" : spielt ? "fa-circle-pause" : "fa-circle-play");
+  const b = $("#play"); if (b) b.setAttribute("aria-label", laedt && spielt ? "Lädt" : spielt ? "Pause" : "Abspielen");
+}
+audio.ontimeupdate = () => {
+  const f = $("#fort"); if (f && audio.duration) f.style.width = (audio.currentTime / audio.duration * 100) + "%";
+  if ($("#scrub") && !ziehen && sprungZiel == null && istQuelle()) zeitZeigen(audio.currentTime);
+};
+audio.onplay = audio.onpause = audio.onended = () => zeigeAbspielzustand();
+audio.onplaying = () => { const a = $("#anders"); if (a) a.innerHTML = `<i class="fa-regular fa-clock"></i>Andere Stelle`; zeigeAbspielzustand(); };
+audio.onwaiting = () => zeigeAbspielzustand(true);
+audio.addEventListener("playing", () => ausschnittZeigen());  // Audit F-23  // Ausschnitt wird noch erzeugt (Audit F-19)
+audio.onerror = () => { if (aktuell && audio.getAttribute("src")) { protokoll("fehler"); abspielFehler(); } };
+vorhoer.onplay = () => audio.pause();
+
+// ---- Seiten
+document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
+  seite = b.dataset.seite;
+  document.querySelectorAll("nav button").forEach(x => { x.classList.toggle("an", x === b); if (x === b) x.setAttribute("aria-current", "page"); else x.removeAttribute("aria-current"); });
+  document.querySelectorAll("main").forEach(m => m.classList.toggle("versteckt", m.id !== seite));
+  $("#leiste").classList.toggle("versteckt", seite !== "bewerten");
+  // Ruhe beim Seitenwechsel: nichts spielt weiter
+  audio.pause(); vorhoer.pause();
+  const laden = {stand: standZeigen, duplikate: dupZeigen, genres: genresZeigen, bewerten: genresLaden}[seite];
+  laden().catch(e => melde(e.message));
+});
+
+// Kurzfassung; Verlauf, Tempo-Spanne und jedes Genre stehen auf der Statusseite (Audit F-07/F-08).
+// Tempo und Restzeit aus derselben Quelle wie dort, damit beide Seiten dieselbe Zahl zeigen.
+const zahlDe = x => Math.round(x).toLocaleString("de-DE");
+function restText(stunden) {
+  if (stunden == null || !isFinite(stunden)) return null;
+  return stunden < 48 ? `${zahlDe(stunden)} Std.` : `${(stunden / 24).toLocaleString("de-DE", {maximumFractionDigits: 1})} Tage`;
+}
+async function standZeigen() {
+  const [a, s] = await Promise.all([api("/api/analyse?stunden=6"), api("/api/stand")]);
+  const L = a.lieder, fertig = L.analysiert || 0, offen = L.neu || 0, gesamt = fertig + offen + (L.fehler || 0);
+  const tempo = offen > 0 && a.tempo
+    ? `≈ ${zahlDe(a.tempo)}/Std. · Rest ≈ ${restText(offen / a.tempo)}${a.tempo_n < 3 ? " (misst noch)" : ""}`
+    : offen ? (a.dienst.laeuft ? "misst noch das Tempo" : "Analyse pausiert") : "alle analysiert";
+  const genresN = s.modell.length, bereit = s.modell.filter(m => m.schwelle != null && m.belegt).length;
+  const balken = (anteil, farbe) => `<div class="mini"><div style="width:${Math.min(100, anteil * 100)}%;${farbe ? `background:var(${farbe})` : ""}"></div></div>`;
+  $("#stand").innerHTML = `
+    <div class="raster">
+      <div class="karte"><div class="unter"><i class="fa-regular fa-hourglass-half"></i> Analysiert</div>
+        <div class="zahl">${zahlDe(fertig)}</div>
+        <div class="unter">von ${zahlDe(gesamt)}${L.fehler ? ` · ${zahlDe(L.fehler)} Fehler` : ""}</div>
+        ${balken(gesamt ? fertig / gesamt : 0)}<div class="unter">${tempo}</div></div>
+      <div class="karte"><div class="unter"><i class="fa-regular fa-circle-check"></i> Selbst-Sortieren</div>
+        <div class="zahl">${bereit} <span class="unter" style="font-size:15px">von ${genresN} Genres</span></div>
+        <div class="unter">${zahlDe(s.bewertet)} bewertet · je Genre mind. ${s.bewertungen_mind}</div>
+        ${balken(genresN ? s.bewertet / (genresN * s.bewertungen_mind) : 0, "--gut")}</div>
+      <div class="karte"><div class="unter"><i class="fa-regular fa-copy"></i> Duplikate</div>
+        <div class="zahl">${zahlDe(s.dup_ueberzaehlig)}</div>
+        <div class="unter">überzählig in ${zahlDe(s.dup_gruppen)} ${s.dup_gruppen === 1 ? "Gruppe" : "Gruppen"}</div>
+        <button class="knopf" id="zuDuplikaten" style="margin-top:8px"><i class="fa-regular fa-circle-right"></i>Ansehen</button></div>
+    </div>
+    <a class="karte statuslink" href="/status"><i class="fa-regular fa-chart-bar"></i>
+      <span><b>Alles auf der Statusseite</b><span class="unter" style="display:block">Verlauf, Tempo mit Spanne und jedes Genre auf dem Weg zum Selbst-Sortieren</span></span>
+      <i class="fa-regular fa-circle-right"></i></a>`;
+  $("#zuDuplikaten").onclick = () => document.querySelector("nav [data-seite=duplikate]").click();
+}
+
+function genreWaehlen(titel, optionen) {
+  // kleiner Auswahldialog; liefert Wert ("" = oberste Ebene) oder null bei Abbruch
+  return new Promise(fertig => {
+    $("#waehlTitel").textContent = titel;
+    $("#waehlListe").innerHTML = optionen;
+    let wert = null;
+    $("#waehlOk").onclick = () => { wert = $("#waehlListe").value; $("#waehlDlg").close(); };
+    $("#waehlAbbr").onclick = () => $("#waehlDlg").close();
+    $("#waehlDlg").addEventListener("close", () => fertig(wert), {once: true});
+    $("#waehlDlg").showModal();
+  });
+}
+
+async function genresZeigen() {
+  ++genresNr;  // ältere genresLaden-Antworten verwerfen
+  genres = await api("/api/genres");
+  const verw = await api("/api/verwechslungen");
+  const summe = id => [...zweig(id)].reduce((a, i) => a + (genres.find(g => g.id === i)?.n || 0), 0);
+  const zeile = (g, tiefe) => `<div class="baumzeile" style="padding-left:${tiefe * 16}px">
+      <div class="name">${esc(g.name)} <span class="unter">${g.n}</span></div>
+      <button class="knopf" data-aendern="${g.id}" aria-label="${esc(g.name)} ändern"><i class="fa-regular fa-pen-to-square"></i></button>
+    </div>` + kinderVon(g.id).map(k => zeile(k, tiefe + 1)).join("");
+  const istVorfahr = (v, k) => { for (let e = k?.eltern_id; e != null; e = genres.find(x => x.id === e)?.eltern_id) if (e === v?.id) return true; return false; };
+  const hinweise = verw.map(v => {
+    const a = genres.find(g => g.id === v.a), b = genres.find(g => g.id === v.b);
+    let [klein, gross] = (a?.n ?? 0) <= (b?.n ?? 0) ? [a, b] : [b, a];
+    // Eltern/Kind: immer das Kind ins Elternteil, nie umgekehrt (sonst Kreis)
+    if (istVorfahr(klein, gross)) [klein, gross] = [gross, klein];
+    return klein && gross ? `<div class="baumzeile"><div class="name">${esc(v.a_pfad)} ↔ ${esc(v.b_pfad)}
+        <div class="unter">klingen fürs Modell ähnlich: ${Math.round(v.anteil * 100)} % von ${v.n} Liedern landeten beim anderen</div></div>
+        <button class="knopf" data-merge="${klein.id}:${gross.id}"><i class="fa-regular fa-object-group"></i> Zusammen</button></div>` : "";
+  }).join("");
+  $("#genres").innerHTML = `
+    ${hinweise ? `<div class="karte"><b>Oft verwechselt</b>
+      <div class="unter">Das Modell hört hier kaum einen Unterschied. Zusammenlegen spart dir Handarbeit.</div>${hinweise}</div>` : ""}
+    <div class="karte"><b>Alle Genres</b> <span class="unter">Zahl = Bewertungen</span>
+      ${kinderVon(null).map(g => zeile(g, 0)).join("") || '<div class="leer">Noch keine Genres. Leg sie beim Bewerten an.</div>'}
+      <details><summary><i class="fa-regular fa-circle-question"></i> Was geht hier?</summary>
+        <div><i class="fa-regular fa-pen-to-square"></i> bei einem Genre: umbenennen, unter ein anderes hängen oder in ein anderes aufgehen lassen.
+        Bewertungen bleiben in allen Fällen erhalten.</div></details></div>`;
+  const neuZeigen = async () => { await genresZeigen(); };
+  const zusammen = (quelle, ziel) => einmal("genre", async () => {
+    const q = genres.find(x => x.id === quelle), z = genres.find(x => x.id === ziel);
+    if (!q || !z) return;
+    const n = summe(quelle), kinder = zweig(quelle).size - 1;
+    const bew = n === 1 ? "1 Bewertung" : `${n} Bewertungen`, kind = kinder === 1 ? "1 Unter-Genre" : `${kinder} Unter-Genres`;
+    if (!confirm(`„${q.pfad}“ in „${z.pfad}“ aufgehen lassen? ${bew}${kinder ? ` und ${kind}` : ""} wandern mit.`)) return;
+    await post(`/api/genres/${quelle}/zusammenfuehren`, {ziel_id: ziel});
+    await neuZeigen();
+  });
+  const aendern = (g, name, eltern_id) => einmal("genre", async () => {
+    try { await patch(`/api/genres/${g.id}`, {name, eltern_id}); }
+    catch (e) {
+      // Name dort schon vergeben: Zusammenführen direkt anbieten
+      const gleich = genres.find(x => x.id !== g.id && x.eltern_id === eltern_id && norm(x.name) === norm(name));
+      if (gleich && e.message.includes("Zusammenführen")) { laeuft.delete("genre"); return zusammen(g.id, gleich.id); }
+      throw e;
+    }
+    await neuZeigen();
+  });
+  const aktionen = {
+    umb: g => {
+      const name = prompt("Neuer Name", g.name);
+      if (name && name.trim() && name.trim() !== g.name) aendern(g, name.trim(), g.eltern_id);
+    },
+    versch: async g => {
+      const ziel = await genreWaehlen(`„${g.name}“ hängen unter`, elternAuswahl(g.id));
+      if (ziel !== null) aendern(g, g.name, ziel ? +ziel : null);
+    },
+    zus: async g => {
+      const verboten = zweig(g.id);  // in sich selbst oder darunter geht nicht
+      const ziel = await genreWaehlen(`„${g.name}“ aufgehen lassen in`,
+        [...genres].filter(x => !verboten.has(x.id)).sort((a, c) => a.pfad.localeCompare(c.pfad))
+          .map(x => `<option value="${x.id}">${esc(x.pfad)}</option>`).join(""));
+      if (ziel) zusammen(g.id, +ziel);
+    },
+  };
+  $("#genres").querySelectorAll("[data-aendern]").forEach(b => b.onclick = () => {
+    const g = genres.find(x => x.id === +b.dataset.aendern);
+    $("#aktionTitel").textContent = g.pfad;
+    $("#aktionDlg").querySelectorAll("[data-aktion]").forEach(a => a.onclick = () => {
+      $("#aktionDlg").close(); aktionen[a.dataset.aktion](g);
+    });
+    $("#aktionDlg").showModal();
+  });
+  $("#genres").querySelectorAll("[data-merge]").forEach(b => b.onclick = () => {
+    const [q, z] = b.dataset.merge.split(":").map(Number); zusammen(q, z);
+  });
+}
+
+// eigene Behalten-Wahl je Gruppe: übersteht das Neuladen nach einer anderen Entscheidung (Audit F-01)
+// zuletzt entschiedene Gruppen: Rückgängig bleibt sichtbar, auch wenn eine neue Meldung kommt (Audit F-21)
+let dupZuletzt = [];
+const dupName = pfad => pfad.split("/").pop();
+
+const STUFE_NAME = {"1": "bitgleich", "2": "gleiche Aufnahme", "C": "andere Fassung (Name/Länge)", "A": "Anfang und Ende gleich",
+                    "B": "AcoustID", "D": "gelernt aus deinen Entscheidungen"};
+async function dupZeigen() {
+  const [g, stand, auto] = await Promise.all([api("/api/duplikate"), api("/api/stand").catch(() => null),
+                                              api("/api/duplikate-auto").catch(() => null)]);
+  const technik = m => `${esc((m.codec || "").toUpperCase())} ${m.verlustfrei
+    ? (m.aus_mp3 ? "FLAC, vermutlich aus MP3" : `verlustfrei${m.bittiefe ? ` ${m.bittiefe} bit` : ""}`) : (m.bitrate || "?") + " kbit/s"} · ${Math.round(m.dauer || 0)} s`;
+  // Je Datei ein Knopf „Diesen behalten“: ein Tipp, die anderen werden zum Löschen vorgemerkt
+  const zeile = (gr, m) => `<div class="dupzeile">
+      <button class="knopf" data-hoer="${m.id}" aria-label="${esc(dupName(m.pfad))} anhören"><i class="fa-regular fa-circle-play" style="margin:0"></i></button>
+      <div class="duptext"><div class="${m.empfohlen ? "empfohlen" : ""}">${esc(m.pfad)}</div>
+        <div class="unter">${technik(m)}${m.empfohlen ? ` · <b>beste Qualität</b>` : ""}${m.stern ? ` · <i class="fa-regular fa-star" aria-hidden="true"></i> Favorit` : ""}</div></div>
+      <button class="knopf behalt${m.empfohlen ? " erste" : ""}" data-behalt="${m.id}" data-gruppe-id="${gr.id}"
+        aria-label="${esc(dupName(m.pfad))} behalten, die anderen zum Löschen vormerken"><i class="fa-regular fa-circle-check"></i>Diesen behalten</button></div>`;
+  // wie viele es insgesamt gibt: gezeigt werden nur die ersten (Audit F-22)
+  const alle = stand?.dup_gruppen ?? g.length;
+  const zuletzt = dupZuletzt.length ? `<div class="karte"><div class="abschnitt">Zuletzt entschieden</div>${dupZuletzt.map(z =>
+    `<div class="baumzeile"><div class="name">${esc(z.text)}</div><button class="knopf" data-zurueck="${z.gid}"><i class="fa-regular fa-circle-left"></i>Rückgängig</button></div>`).join("")}</div>` : "";
+  // Automatik: kurz zusammengefasst, Einzelheiten hinter dem Aufklapper, alles mit einem Knopf zurücknehmbar
+  const stufen = Object.entries(auto?.stufen ?? {});
+  const summe = x => (x.freigegeben || 0) + (x.verworfen || 0);
+  const autoKarte = stufen.length ? `<div class="karte"><div class="baumzeile"><div class="name"><i class="fa-regular fa-circle-check"></i>
+      <b>${zahl(stufen.reduce((a, [, x]) => a + summe(x), 0))}</b> Gruppen automatisch entschieden</div>
+      <button class="knopf" id="autoZurueck"><i class="fa-regular fa-circle-left"></i>Alle zurücknehmen</button></div>
+    <details><summary><i class="fa-regular fa-circle-question"></i> Wie?</summary>${stufen.map(([k, x]) =>
+      `<div>${esc(STUFE_NAME[k] ?? k)}: ${x.freigegeben ? `${zahl(x.freigegeben)} × beste behalten` : ""}${x.freigegeben && x.verworfen ? ", " : ""}${x.verworfen ? `${zahl(x.verworfen)} × alle behalten` : ""}</div>`).join("")}
+      <div>Gelöscht wird erst beim Sortierlauf. Jede automatische Entscheidung steht mit Grund im Protokoll.</div></details></div>` : "";
+  $("#duplikate").innerHTML = autoKarte + zuletzt + `<div class="karte unter"><i class="fa-regular fa-circle-question"></i> „Diesen behalten“ merkt die anderen Dateien der Gruppe zum Löschen vor. Gelöscht wird erst beim Sortierlauf, Rückgängig geht jederzeit.
+    ${alle > g.length ? `<div style="margin-top:6px">${g.length} von ${alle} Gruppen. Weitere erscheinen, sobald du diese entscheidest.</div>` : ""}</div>` +
+    (g.length ? g.map(gr => `<div class="karte" data-gruppe="${gr.id}">
+      <div class="grund"><i class="fa-regular ${gr.sicher ? "fa-copy" : "fa-circle-question"}"></i>${gr.sicher ? "Gleiche Aufnahme" : "Edit, Remaster oder Live?"}</div>
+      ${gr.mitglieder.map(m => zeile(gr, m)).join("")}
+      <div style="margin-top:10px"><button class="knopf" data-verwerfen="${gr.id}" style="width:100%"><i class="fa-regular fa-folder"></i>Alle behalten</button></div></div>`).join("")
+     : '<div class="leer">Keine offenen Duplikate.</div>');
+  $("#duplikate").querySelectorAll("[data-hoer]").forEach(b => b.onclick = e => { e.stopPropagation(); vorhoeren(b.dataset.hoer); });
+  if ($("#autoZurueck")) $("#autoZurueck").onclick = () => einmal("autoZurueck", async () => {
+    if (!confirm("Alle automatischen Entscheidungen zurücknehmen? Die Gruppen kommen dann wieder zu dir.")) return;
+    const r = await post("/api/duplikate-auto/zuruecknehmen", {});
+    melde(`${zahl(r.zurueckgenommen)} automatische Entscheidungen zurückgenommen.`);
+    await dupZeigen();
+    fortschrittZeigen().catch(() => {});
+  });
+  const entscheiden = (gid, koerper) => einmal("dup" + gid, async () => {
+    // mitschicken, was angezeigt wurde: der Server lehnt ab, falls die Gruppe sich geändert hat
+    const gr = g.find(x => x.id === +gid);
+    const mitglieder = gr.mitglieder.map(m => m.id);
+    try {
+      await post(`/api/duplikate/${gid}`, {...koerper, mitglieder});
+      const name = dupName((gr.mitglieder.find(m => m.id === koerper.behalten) ?? gr.mitglieder[0]).pfad);
+      const andere = gr.mitglieder.length - 1;
+      const text = koerper.status === "freigegeben" ? `„${name}“ behalten, ${andere} ${andere === 1 ? "andere Datei" : "andere Dateien"} vorgemerkt` : `„${name}“ und Co.: alle behalten`;
+      dupZuletzt = [{gid: +gid, text}, ...dupZuletzt.filter(z => z.gid !== +gid)].slice(0, 5);
+      melde(koerper.status === "freigegeben" ? `„${name}“ behalten, Rest zum Löschen vorgemerkt.` : "Alle werden behalten.",
+            "Rückgängig", () => dupZuruecknehmen(+gid));
+    }
+    finally { if (seite === "duplikate") await dupZeigen(); }
+    vorhoer.pause();
+  });
+  $("#duplikate").querySelectorAll("[data-zurueck]").forEach(b => b.onclick = () => dupZuruecknehmen(+b.dataset.zurueck));
+  $("#duplikate").querySelectorAll("[data-verwerfen]").forEach(b => b.onclick = () => entscheiden(b.dataset.verwerfen, {status: "verworfen"}));
+  $("#duplikate").querySelectorAll("[data-behalt]").forEach(b => b.onclick = () =>
+    entscheiden(b.dataset.gruppeId, {status: "freigegeben", behalten: +b.dataset.behalt}));
+}
+
+const dupZuruecknehmen = gid => einmal("zurueck" + gid, async () => {
+  const r = await post(`/api/duplikate/${gid}/zuruecknehmen`, {});
+  dupZuletzt = dupZuletzt.filter(z => z.gid !== gid);
+  melde(r?.neu_vorgelegt ? "Zurückgenommen. Die Gruppe kommt bei der nächsten Duplikatsuche neu." : "Zurückgenommen.");
+  if (seite === "duplikate") await dupZeigen();
+});
+
+// ---- Projektfortschritt (Hauptseite)
+const prozentText = (teil, ganz) => {
+  if (!ganz) return "–";
+  const p = 100 * teil / ganz;
+  return (p > 0 && p < 10 ? p.toFixed(1).replace(".", ",") : Math.round(p)) + " %";
+};
+const zahl = n => Number(n).toLocaleString("de-DE");
+const dauerText = h => h == null ? "unbekannt" : h < 1 ? "unter 1 Stunde" : h < 48 ? `~${Math.round(h)} Stunden` : `~${Math.round(h / 24)} Tage`;
+async function fortschrittZeigen() {
+  const f = await api("/api/fortschritt");
+  const a = f.analyse, g = f.genres, d = f.duplikate;
+  const zeile = (icon, name, teil, ganz, extra = "") => `<div class="fzeile"${extra}><i class="fa-regular ${icon}" aria-hidden="true"></i>
+    <span>${name}</span><div class="mini" role="img" aria-label="${name} ${prozentText(teil, ganz)}"><div style="width:${ganz ? Math.min(100, 100 * teil / ganz) : 0}%"></div></div>
+    <span class="fwert">${prozentText(teil, ganz)}</span></div>`;
+  const dupGesamt = d.offen + d.entschieden;
+  $("#fortschritt").innerHTML =
+    zeile("fa-hourglass-half", "Analyse", a.fertig, a.gesamt)
+    + zeile("fa-folder", "Genres", g.abgedeckt, g.gesamt)
+    + zeile("fa-copy", "Duplikate", d.entschieden, dupGesamt, ' id="zuDupFortschritt" class="fzeile knopflink"')
+    + `<details><summary><i class="fa-regular fa-circle-question"></i> Was heißt das?</summary>
+      <div><b>Analyse</b>: ${zahl(a.fertig)} von ${zahl(a.gesamt)} Liedern angehört${a.rest ? `, Rest ${dauerText(a.rest_stunden)}${a.pro_stunde ? ` (~${zahl(Math.round(a.pro_stunde))} je Stunde)` : ""}` : " – fertig"}. Läuft von selbst.</div>
+      <div><b>Genres</b>: ${zahl(g.bewertet)} von dir bewertet${g.bestaetigt ? ` + ${zahl(g.bestaetigt)} vom Modell bestätigt einsortiert` : ""}.
+        ${g.selbst_sortierend ? `${g.selbst_sortierend} Genre${g.selbst_sortierend === 1 ? "" : "s"} sortiert selbst${g.wartet ? ` (${zahl(g.wartet)} Lieder warten noch auf Stichproben)` : ""}.` : "Noch kein Genre sortiert selbst."}
+        ${g.naechstes ? `Am nächsten dran: <b>${esc(g.naechstes.pfad)}</b>, noch ${g.naechstes.fehlt} Bewertung${g.naechstes.fehlt === 1 ? "" : "en"}.` : ""}
+        Eine Prognose bis „fertig“ kommt, sobald die ersten Genres selbst sortieren.</div>
+      <div><b>Duplikate</b>: ${zahl(d.entschieden)} von ${zahl(dupGesamt)} Gruppen entschieden. Antippen öffnet die Liste.</div></details>`;
+  $("#zuDupFortschritt").onclick = () => document.querySelector("nav [data-seite=duplikate]").click();
+}
+let gespeichertSeitFortschritt = 0;
+setInterval(() => { if (!document.hidden && seite === "bewerten") fortschrittZeigen().catch(() => {}); }, 5 * 60000);
+
+async function start() {
+  fortschrittZeigen().catch(() => {});  // stört das Bewerten nie, auch wenn es scheitert
+  try { await genresLaden(); await weiter(); }
+  catch (e) {
+    $("#lied").innerHTML = `<div class="leer">Server nicht erreichbar.<br><span class="unter">${esc(e.message)}</span><br><br>
+      <button class="knopf" id="nochmal"><i class="fa-regular fa-circle-right"></i>Nochmal</button></div>`;
+    $("#nochmal").onclick = start;
+  }
+}
+// Offene Seite aktualisiert sich selbst: Stand jede Minute und beim Zurückholen (Design-Guideline §9, Audit F-16)
+const auffrischen = () => { if (!document.hidden && seite === "stand") standZeigen().catch(() => {}); };
+setInterval(auffrischen, 60000);
+document.addEventListener("visibilitychange", auffrischen);
+start();
+</script>
+</body>
+</html>

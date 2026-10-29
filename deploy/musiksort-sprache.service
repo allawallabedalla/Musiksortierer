@@ -1,0 +1,27 @@
+# Gesangssprache messen (Whisper tiny, nur Spracherkennung), gedrosselt wie die Analyse.
+# Einmal für alle ~100.000 Lieder ≈ 2 Tage, danach nur noch neue Lieder.
+[Unit]
+Description=Musiksortierer (Gesangssprache messen)
+After=network-online.target
+OnFailure=musiksort-meldung@%n.service
+
+[Service]
+Slice=musiksort.slice
+Type=oneshot
+WorkingDirectory=%h/musiksortierer
+Environment=PYTHONUNBUFFERED=1 OMP_NUM_THREADS=2
+ExecStart=/usr/bin/taskset -c 4,5 %h/musiksortierer/.venv/bin/python -m musiksort.sprache
+Restart=on-failure
+RestartSec=300
+Nice=15
+IOSchedulingClass=idle
+CPUQuota=150%
+MemoryMax=1500M
+MemorySwapMax=256M
+TimeoutStartSec=infinity
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=tmpfs
+BindReadOnlyPaths=%h/musiksortierer /mnt/media
+BindPaths=%h/.local/share/musiksortierer %h/.cache/musiksortierer

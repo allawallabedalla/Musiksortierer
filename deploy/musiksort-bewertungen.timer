@@ -1,0 +1,9 @@
+[Unit]
+Description=Musiksortierer: Bewertungen stündlich sichern (kurz vor der vollen Stunde)
+
+[Timer]
+OnCalendar=*-*-* *:55:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

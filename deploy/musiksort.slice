@@ -1,0 +1,10 @@
+# Gemeinsame Obergrenze für alles vom Musiksortierer: die Klanggruppen-Berechnung unter Dauerlast brachte
+# den Rechner sonst an seine Grenzen. Zusätzlich sind die rechnenden Dienste mit taskset auf die Kerne 4–5
+# gepinnt, damit andere Dienste auf dem Rechner 0–3 immer frei haben (auf kleineren Rechnern anpassen).
+[Unit]
+Description=Musiksortierer (gemeinsame Grenzen)
+
+[Slice]
+CPUQuota=200%
+MemoryMax=3500M
+# kein MemoryHigh: die weiche Bremse löste einen der Kernel-Abstürze aus (reclaim_high → list_lru_add, Kernel 6.12.111)

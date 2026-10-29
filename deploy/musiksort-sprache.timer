@@ -1,0 +1,10 @@
+[Unit]
+Description=Musiksortierer: Sprachmessung stündlich fortsetzen
+
+[Timer]
+OnBootSec=15min
+OnUnitInactiveSec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

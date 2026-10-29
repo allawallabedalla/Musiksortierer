@@ -1,0 +1,18 @@
+# Stündlich: deine Bewertungen/Genres/Duplikat-Entscheidungen als kleine JSON-Datei,
+# damit eine stündliche Datensicherung sie erfasst (die große DB nur täglich, musiksort-sicherung).
+[Unit]
+Description=Musiksortierer (Bewertungen sichern)
+OnFailure=musiksort-meldung@%n.service
+
+[Service]
+Slice=musiksort.slice
+Type=oneshot
+WorkingDirectory=%h/musiksortierer
+ExecStart=/usr/bin/taskset -c 4,5 %h/musiksortierer/.venv/bin/python -m musiksort.sicherung --bewertungen
+Nice=10
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=tmpfs
+BindReadOnlyPaths=%h/musiksortierer
+BindPaths=%h/.local/share/musiksortierer

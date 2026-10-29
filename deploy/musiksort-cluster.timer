@@ -1,0 +1,9 @@
+[Unit]
+Description=Musiksortierer: Klanggruppen alle 2 Stunden
+
+[Timer]
+OnCalendar=*-*-* 00/2:25:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

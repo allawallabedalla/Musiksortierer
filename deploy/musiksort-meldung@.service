@@ -1,0 +1,8 @@
+# Push aufs Handy, wenn ein Musiksortierer-Dienst scheitert (Pushover-Zugang aus ~/.env, sonst nur Journal).
+[Unit]
+Description=Musiksortierer: Ausfall melden (%i)
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/musiksortierer
+ExecStart=%h/musiksortierer/.venv/bin/python -m musiksort.meldung %i

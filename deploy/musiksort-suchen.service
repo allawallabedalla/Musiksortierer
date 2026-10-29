@@ -1,0 +1,25 @@
+# Nachts: neue/geänderte/fehlende Dateien finden, danach Duplikate und die Duplikat-Automatik.
+[Unit]
+Description=Musiksortierer (Dateien auf dem NAS suchen)
+OnFailure=musiksort-meldung@%n.service
+
+[Service]
+Slice=musiksort.slice
+Type=oneshot
+WorkingDirectory=%h/musiksortierer
+EnvironmentFile=-%h/.config/musiksortierer/acoustid.env
+ExecStart=/usr/bin/taskset -c 4,5 %h/musiksortierer/.venv/bin/python -m musiksort.scan suchen
+ExecStartPost=/usr/bin/taskset -c 4,5 %h/musiksortierer/.venv/bin/python -m musiksort.duplikate
+ExecStartPost=/usr/bin/taskset -c 4,5 %h/musiksortierer/.venv/bin/python -m musiksort.dupauto
+Nice=15
+IOSchedulingClass=idle
+MemoryMax=3G
+# Die Klangmessung der Duplikat-Automatik holt nach einem Umbau u. U. zehntausende Lieder nach; der Fortschritt
+# bleibt gespeichert, 4 h reichten aber nicht und jede Nacht kam eine Fehlermeldung
+TimeoutStartSec=9h
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=tmpfs
+BindReadOnlyPaths=%h/musiksortierer /mnt/media
+BindPaths=%h/.local/share/musiksortierer %h/.cache/musiksortierer

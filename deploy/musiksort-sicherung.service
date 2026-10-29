@@ -1,0 +1,16 @@
+[Unit]
+Description=Musiksortierer (Datenbank sichern)
+OnFailure=musiksort-meldung@%n.service
+
+[Service]
+Slice=musiksort.slice
+Type=oneshot
+WorkingDirectory=%h/musiksortierer
+ExecStart=/usr/bin/taskset -c 4,5 %h/musiksortierer/.venv/bin/python -m musiksort.sicherung
+Nice=10
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=tmpfs
+BindReadOnlyPaths=%h/musiksortierer
+BindPaths=%h/.local/share/musiksortierer

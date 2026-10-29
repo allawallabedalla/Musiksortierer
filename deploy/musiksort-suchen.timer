@@ -1,0 +1,9 @@
+[Unit]
+Description=Musiksortierer: nachts neue Dateien suchen
+
+[Timer]
+OnCalendar=*-*-* 03:40
+Persistent=true
+
+[Install]
+WantedBy=timers.target
