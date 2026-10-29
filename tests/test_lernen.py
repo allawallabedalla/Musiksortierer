@@ -326,6 +326,19 @@ def test_obergenre_sortiert_grob_wenn_unter_genres_ununterscheidbar(con, monkeyp
     monkeypatch.setattr(config, "STICHPROBE_ANTEIL", 1.0)
     gezogen = [x for _ in range(40) for x in lernen.naechste(con, 3) if x["grund"] == "stichprobe"]
     assert any(x.get("pruef_id") == p for x in gezogen)
+    # Vorrang: kurz vor dem Beleg kommen nur noch Stichproben – bis das Genre belegt ist
+    monkeypatch.setattr(config, "STICHPROBE_ANTEIL", 0.0)
+    monkeypatch.setattr(config, "STICHPROBE_VORRANG_LIEDER", 10)
+    monkeypatch.setattr(config, "STICHPROBE_VORRANG_FEHLT", 40)
+    for w, g in ((1, g1), (2, g2)):   # die fein sortierten Wolken sind schon belegt: kein Vorrang
+        con.executemany("INSERT INTO stichproben(lied_id, vorhergesagt, gewaehlt, ts) VALUES (?,?,?,0)",
+                        [(l, g, g) for l in wolke[w][100:115]])
+    karten = lernen.naechste(con, 3)
+    assert [x["grund"] for x in karten] == ["stichprobe"] * 3 and {x["pruef_id"] for x in karten} == {p}
+    con.executemany("INSERT INTO stichproben(lied_id, vorhergesagt, gewaehlt, ts) VALUES (?,?,?,0)",
+                    [(l, p, a) for l in wolke[0][102:140]])
+    assert lernen.stichproben_fehlen(*lernen._stichproben(con)[p]) == 0
+    assert all(x["grund"] != "stichprobe" for _ in range(5) for x in lernen.naechste(con, 3))
 
 
 def test_deutschrap_wird_ueber_die_sprache_erkannt(con):

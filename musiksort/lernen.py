@@ -520,7 +520,8 @@ def naechste(con, anzahl=3, ausschliessen=()):
     """Backlog-Mischung, alles direkt aus der Datenbank:
 
     - Stichprobe (~15 %): ein automatisch zugeordnetes Lied, Genre zuerst – bevorzugt, wo eine
-      richtige Antwort die meisten Lieder freischaltet (stichproben_gewichte).
+      richtige Antwort die meisten Lieder freischaltet (stichproben_gewichte). Ist ein großes Genre
+      nur noch wenige Antworten vom Beleg entfernt, kommen nur noch Stichproben (Vorrang).
     - Klanggruppe: noch unbenannte Gruppen, größte zuerst.
     - Mehr Beispiele: Genres, die laut Modell häufig sind, aber < 30 Bewertungen haben.
     - Unsicher: kleinster Abstand zwischen den zwei besten Genres.
@@ -550,6 +551,10 @@ def naechste(con, anzahl=3, ausschliessen=()):
     wartend = dict(con.execute("SELECT g, COUNT(*) FROM (SELECT genre_id g FROM vorhersagen WHERE auto=1 "
                                "UNION ALL SELECT ober_id FROM vorhersagen WHERE ober_id IS NOT NULL) GROUP BY g"))
     auto_genres = stichproben_gewichte(wartend, stich)
+    # Vorrang: ein großes Genre ist nur noch wenige richtige Antworten vom Beleg entfernt → nur Stichproben
+    # für diese Genres, bis sie belegt sind (oder eine falsche Antwort den Bedarf über die Grenze treibt)
+    vorrang = [(g, w) for g, w in auto_genres if wartend[g] >= config.STICHPROBE_VORRANG_LIEDER
+               and 0 < (stichproben_fehlen(*stich.get(g, (0, 0))) or 0) <= config.STICHPROBE_VORRANG_FEHLT]
     n_bew = dict(con.execute("SELECT genre_id, COUNT(*) FROM etiketten WHERE haupt=1 GROUP BY genre_id").fetchall())
     haeufig = [(g, n) for g, n in con.execute("SELECT genre_id, COUNT(*) FROM vorhersagen GROUP BY genre_id")
                if n >= 50 and n_bew.get(g, 0) < config.MIN_BEWERTUNGEN_AUTO]
@@ -574,8 +579,8 @@ def naechste(con, anzahl=3, ausschliessen=()):
     for _ in range(anzahl):
         wahl = grund = None
         wurf = zufall.random()
-        if auto_genres and wurf < config.STICHPROBE_ANTEIL:
-            g = gewichtet(auto_genres)
+        if vorrang or (auto_genres and wurf < config.STICHPROBE_ANTEIL):
+            g = gewichtet(vorrang or auto_genres)
             wahl = frei(f"SELECT v.lied_id FROM vorhersagen v {analysiert.format('v')} WHERE (v.auto=1 AND v.genre_id=?) "
                         "OR v.ober_id=? ORDER BY random() LIMIT 150", g, g)
             grund = "stichprobe"
