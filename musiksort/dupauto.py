@@ -277,8 +277,10 @@ class Lernmodell:
 
 # ---------------------------------------------------------------- Ablauf
 
-def laufen(con=None, stufen=STUFEN, trocken=False, nachschlagen=None, ausgabe=print):
+def laufen(con=None, stufen=STUFEN, trocken=False, nachschlagen=None, ausgabe=print, max_minuten=None):
+    """max_minuten: danach sauber aufhören; Messungen und Entscheidungen bleiben, die nächste Nacht macht weiter."""
     con = con or db.verbinden()
+    ende = time.monotonic() + 60 * max_minuten if max_minuten else None
     schluessel = config.env("ACOUSTID_KEY")
     if nachschlagen is None and schluessel:
         import acoustid
@@ -296,6 +298,10 @@ def laufen(con=None, stufen=STUFEN, trocken=False, nachschlagen=None, ausgabe=pr
         for gid, sicher, ms in offene_gruppen(con):
             if gid in erledigt:
                 continue
+            if ende and time.monotonic() > ende:
+                ausgabe(f"Stufe {stufe}: Zeit um nach {max_minuten} min, Rest folgt beim nächsten Lauf")
+                zaehler[(stufe, "Zeit um")] += 1
+                return zaehler
             try:
                 urteil = pruefer[stufe](con, sicher, ms, schluessel=schluessel, nachschlagen=nachschlagen)
             except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as e:
@@ -402,6 +408,7 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--trocken", action="store_true", help="nur zählen, nichts entscheiden")
     ap.add_argument("--stufen", default=",".join(STUFEN))
+    ap.add_argument("--max-minuten", type=float, help="danach aufhören (Rest beim nächsten Lauf)")
     ap.add_argument("--nachpruefen", choices=["2", "A"], help="frühere Entscheidungen dieser Stufe neu prüfen")
     a = ap.parse_args()
     if a.nachpruefen:
@@ -410,5 +417,7 @@ if __name__ == "__main__":
     stufen = [s.strip().upper() for s in a.stufen.split(",") if s.strip()]
     if not set(stufen) <= set(STUFEN):
         sys.exit(f"Stufen: {', '.join(STUFEN)}")
-    z = laufen(stufen=stufen, trocken=a.trocken)
+    # flush: sonst gehen die Zeilen im Journal verloren, wenn systemd den Lauf beendet
+    z = laufen(stufen=stufen, trocken=a.trocken, max_minuten=a.max_minuten,
+               ausgabe=lambda s: print(s, flush=True))
     print("trocken:" if a.trocken else "entschieden:", dict(sorted(((f"{k[0]} {k[1]}"), v) for k, v in z.items())))

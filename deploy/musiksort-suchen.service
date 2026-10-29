@@ -10,12 +10,12 @@ WorkingDirectory=%h/musiksortierer
 EnvironmentFile=-%h/.config/musiksortierer/acoustid.env
 ExecStart=/usr/bin/taskset -c 4,5 %h/musiksortierer/.venv/bin/python -m musiksort.scan suchen
 ExecStartPost=/usr/bin/taskset -c 4,5 %h/musiksortierer/.venv/bin/python -m musiksort.duplikate
-ExecStartPost=/usr/bin/taskset -c 4,5 %h/musiksortierer/.venv/bin/python -m musiksort.dupauto
+ExecStartPost=/usr/bin/taskset -c 4,5 %h/musiksortierer/.venv/bin/python -m musiksort.dupauto --max-minuten 420
 Nice=15
 IOSchedulingClass=idle
 MemoryMax=3G
-# Die Klangmessung der Duplikat-Automatik holt nach einem Umbau u. U. zehntausende Lieder nach; der Fortschritt
-# bleibt gespeichert, 4 h reichten aber nicht und jede Nacht kam eine Fehlermeldung
+# Die Klangmessung der Duplikat-Automatik holt nach einem Umbau u. U. zehntausende Lieder nach. Sie hört nach
+# 7 h sauber auf (Fortschritt bleibt gespeichert, nächste Nacht geht es weiter); 9 h sind nur die Notbremse
 TimeoutStartSec=9h
 NoNewPrivileges=yes
 PrivateTmp=yes

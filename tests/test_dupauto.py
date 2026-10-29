@@ -247,3 +247,17 @@ def test_falsche_flac_verliert_gegen_echte_320er(umgebung):
     assert dupauto.beste_gemessen(con, ms)["id"] == echt
     gf, kante = con.execute("SELECT grenzfrequenz, kante FROM lieder WHERE id=?", (flac,)).fetchone()
     assert 14000 < gf < 17500 and kante >= 25
+
+
+def test_zeitbudget_hoert_sauber_auf(umgebung):
+    con, media = umgebung
+    _audio(media / "Doppelt/a.mp3", [(20, 440)])
+    (media / "Sortiert").mkdir()
+    shutil.copy(media / "Doppelt/a.mp3", media / "Sortiert/a.mp3")
+    g = _gruppe(con, [_lied(con, "Doppelt/a.mp3", media), _lied(con, "Sortiert/a.mp3", media)], abweichung=0.1)
+    zeilen = []
+    z = dupauto.laufen(con, stufen=["1"], ausgabe=zeilen.append, max_minuten=-1)   # Zeit schon um
+    assert z[("1", "Zeit um")] == 1 and "Zeit um" in zeilen[-1]
+    assert _stand(con, g)[0] == "offen"          # nichts angefasst, nächster Lauf macht weiter
+    dupauto.laufen(con, stufen=["1"], ausgabe=lambda *_: None, max_minuten=60)
+    assert _stand(con, g)[0] == "freigegeben"
