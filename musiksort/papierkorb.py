@@ -71,6 +71,16 @@ def gruppe_ausfuehren(con, gruppe_id):
     if weg and con.execute(f"SELECT 1 FROM lieder WHERE stern=1 AND id IN ({','.join('?' * len(weg))})", weg).fetchone():
         con.execute("UPDATE lieder SET stern=1, stern_ts=? WHERE stern=0 AND id IN "
                     "(SELECT lied_id FROM dup_mitglieder WHERE gruppe_id=? AND behalten=1)", (db.jetzt(), gruppe_id))
+    # Bewertung geht nicht verloren: ist die behaltene Datei unbewertet, übernimmt sie die jüngste Bewertung
+    # einer aussortierten (Genre + Zusätze); eigene Bewertungen der behaltenen bleiben unangetastet
+    behalten = [r[0] for r in con.execute("SELECT lied_id FROM dup_mitglieder WHERE gruppe_id=? AND behalten=1",
+                                          (gruppe_id,))]
+    if weg and behalten and not con.execute("SELECT 1 FROM etiketten WHERE lied_id=?", (behalten[0],)).fetchone():
+        quelle = con.execute(f"SELECT lied_id FROM etiketten WHERE haupt=1 AND lied_id IN ({','.join('?' * len(weg))}) "
+                             "ORDER BY ts DESC LIMIT 1", weg).fetchone()
+        if quelle:
+            con.execute("INSERT INTO etiketten SELECT ?, genre_id, haupt, quelle, ts FROM etiketten WHERE lied_id=?",
+                        (behalten[0], quelle[0]))
     for lid in weg:
         verschieben(con, lid, f"Duplikat (Gruppe {gruppe_id})")
     con.execute("UPDATE dup_gruppen SET status='erledigt' WHERE id=?", (gruppe_id,))

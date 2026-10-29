@@ -364,3 +364,36 @@ def test_sprach_merkmale_robust():
     assert sprache.anzeige("de", 0.95) == "Deutsch" and sprache.anzeige("en", 0.6) == "wohl Englisch"
     assert sprache.anzeige("de", 0.3) is None and sprache.anzeige("fehler", None) is None
     assert sprache.stellen(40, 10) == [10] and len(sprache.stellen(240, 60)) == 2
+
+
+def test_karten_zeigen_nur_die_beste_fassung(con):
+    wahr, gids = _wolken(con, n_pro=40)
+    ids = list(wahr)
+    # Familie 1: ids[0] (behalten) + ids[1]; Familie 2 über zwei Gruppen verkettet: ids[2] ~ ids[3] ~ ids[4]
+    for g, mitglieder in enumerate(([(ids[0], 1), (ids[1], 0)], [(ids[2], 1), (ids[3], 0)], [(ids[3], 1), (ids[4], 0)])):
+        gid = con.execute("INSERT INTO dup_gruppen(erstellt, status) VALUES (0, 'offen')").lastrowid
+        con.executemany("INSERT INTO dup_mitglieder(gruppe_id, lied_id, behalten) VALUES (?,?,?)",
+                        [(gid, l, b) for l, b in mitglieder])
+    _bewerte(con, ids[2], gids[0])   # Familie 2 ist damit erledigt
+    con.commit()
+    familie, nur_kopie = duplikate.kopien(con)
+    assert familie[ids[2]] == familie[ids[3]] == familie[ids[4]] != familie[ids[0]]
+    assert nur_kopie == {ids[1], ids[3], ids[4]}
+    gesehen = [x["lied_id"] for _ in range(30) for x in lernen.naechste(con, 3)]
+    assert not set(gesehen) & {ids[1], ids[3], ids[4]}       # nie Kopien
+    erg = [x["lied_id"] for x in lernen.naechste(con, 10, ausschliessen=[ids[0]])]
+    assert ids[0] not in erg and ids[1] not in erg
+
+
+def test_kreuzvalidierung_trennt_kopien_nicht():
+    """Zwei Kopien je Lied, Etiketten zufällig: ohne Familien „erkennt“ das Modell die Kopie wieder."""
+    rng = np.random.default_rng(3)
+    n = 150
+    lieder = rng.normal(size=(n, 64))
+    X = np.vstack([lieder, lieder + 0.01 * rng.normal(size=(n, 64))])
+    y = np.tile(rng.integers(0, 3, n), 2)
+    zaehl = {g: int((y == g).sum()) for g in set(y)}
+    ohne = lernen._kreuzvalidierung(X, y, zaehl)
+    mit = lernen._kreuzvalidierung(X, y, zaehl, familien=np.tile(np.arange(n), 2))
+    assert (ohne[0] == ohne[1]).mean() > 0.6            # geschönt: Zufall wären ~33 %
+    assert (mit[0] == mit[1]).mean() < 0.5              # ehrlich: nahe Zufall

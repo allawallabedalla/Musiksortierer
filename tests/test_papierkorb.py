@@ -58,3 +58,23 @@ def test_leeren_erst_nach_frist(umgebung):
     assert con.execute("SELECT status FROM lieder WHERE id=?", (b,)).fetchone()[0] == "geloescht"
     assert not (media / "_papierkorb" / vor40.isoformat()).exists()   # leere Ordner aufgeräumt
     assert (media / "Musik/a.mp3").exists()                          # Behaltenes unberührt
+
+
+def test_bewertung_wandert_zur_behaltenen_datei(umgebung):
+    con, media, (a, b), g = umgebung
+    rock = con.execute("INSERT INTO genres(name) VALUES ('Rock')").lastrowid
+    zusatz = con.execute("INSERT INTO genres(name) VALUES ('Live')").lastrowid
+    con.execute("INSERT INTO etiketten VALUES (?,?,1,'ich',5)", (b, rock))   # nur die Kopie war bewertet
+    con.execute("INSERT INTO etiketten VALUES (?,?,0,'ich',5)", (b, zusatz))
+    papierkorb.gruppe_ausfuehren(con, g)
+    assert sorted(tuple(r) for r in con.execute("SELECT genre_id, haupt FROM etiketten WHERE lied_id=?", (a,))) \
+        == sorted([(rock, 1), (zusatz, 0)])
+
+
+def test_eigene_bewertung_der_behaltenen_bleibt(umgebung):
+    con, media, (a, b), g = umgebung
+    pop, rock = (con.execute("INSERT INTO genres(name) VALUES (?)", (n,)).lastrowid for n in ("Pop", "Rock"))
+    con.execute("INSERT INTO etiketten VALUES (?,?,1,'ich',5)", (a, pop))
+    con.execute("INSERT INTO etiketten VALUES (?,?,1,'ich',9)", (b, rock))
+    papierkorb.gruppe_ausfuehren(con, g)
+    assert [r[0] for r in con.execute("SELECT genre_id FROM etiketten WHERE lied_id=?", (a,))] == [pop]

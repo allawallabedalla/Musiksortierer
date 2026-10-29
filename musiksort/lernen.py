@@ -31,11 +31,11 @@ import time
 
 import numpy as np
 
-from . import config, db, sprache
+from . import config, db, duplikate, sprache
 
 _sperre = threading.RLock()
 # Ändert sich, was das Modell sieht, sind alte Schwellen ungültig (Kreuzvalidierung neu)
-MERKMALE = "klang+laenge+sprache-1"
+MERKMALE = "klang+laenge+sprache-1/familien"  # „/familien“: Kreuzvalidierung hält Kopien zusammen
 
 
 class Bestand:
@@ -204,8 +204,11 @@ def _info(con, schluessel, wert=None):
     con.execute("INSERT OR REPLACE INTO modell_info VALUES (?,?)", (schluessel, str(wert)))
 
 
-def _kreuzvalidierung(X, y, zaehl):
+def _kreuzvalidierung(X, y, zaehl, familien=None):
     """Ehrliche Schätzung je Genre: 5-fach über alle Genres mit ≥ 5 Beispielen.
+
+    familien (je Zeile): Kopien desselben Liedes landen immer im selben Teil. Sonst lernt das Modell
+    an der einen Kopie und „erkennt“ die andere bei der Prüfung wieder – die Quote sähe zu gut aus.
 
     Lieder kleinerer Genres werden vom Modell der großen vorhergesagt und zählen dort
     als Fehler: so fließt „das Genre gibt es (noch) kaum“ in die Schwellen mit ein.
@@ -213,13 +216,16 @@ def _kreuzvalidierung(X, y, zaehl):
     P = alle Wahrscheinlichkeiten (für die Obergenre-Stufe), reihenfolge = Zeilen in X.
     """
     from sklearn.linear_model import LogisticRegression
-    from sklearn.model_selection import StratifiedKFold, cross_val_predict
+    from sklearn.model_selection import StratifiedGroupKFold, StratifiedKFold, cross_val_predict
     gross = np.array([zaehl[g] >= 5 for g in y])
     if len(set(y[gross])) < 2:
         return None
     modell = LogisticRegression(C=2.0, max_iter=2000, class_weight="balanced")
-    p = cross_val_predict(modell, X[gross], y[gross], cv=StratifiedKFold(5, shuffle=True, random_state=0),
-                          method="predict_proba")
+    if familien is None:
+        teile, gruppen = StratifiedKFold(5, shuffle=True, random_state=0), None
+    else:
+        teile, gruppen = StratifiedGroupKFold(5, shuffle=True, random_state=0), np.asarray(familien)[gross]
+    p = cross_val_predict(modell, X[gross], y[gross], groups=gruppen, cv=teile, method="predict_proba")
     klassen = np.unique(y[gross])
     wahr, vorh, sicher, alle_p = [y[gross]], [klassen[p.argmax(1)]], [p.max(1)], [p]
     reihenfolge = [np.flatnonzero(gross)]
@@ -331,7 +337,8 @@ def trainieren(con=None, cv_erzwingen=False, trocken=False):
     ober, ober_mindest = {}, {}   # Obergenre-Stufe: {genre: (schwelle, quote, n)}, Ausreißer-Grenze
     verwechselt = None
     if cv_faellig:
-        cv = _kreuzvalidierung(X, y, zaehl)
+        familie = duplikate.kopien(con)[0]
+        cv = _kreuzvalidierung(X, y, zaehl, [familie.get(e["lied_id"], -e["lied_id"]) for e in et])
         if cv is not None:
             wahr, vorh, sicher, P_cv, klassen_cv, _ = cv
             richtig = wahr == vorh
@@ -477,12 +484,17 @@ def naechste(con, anzahl=3, ausschliessen=()):
     - Klanggruppe: noch unbenannte Gruppen, größte zuerst.
     - Mehr Beispiele: Genres, die laut Modell häufig sind, aber < 30 Bewertungen haben.
     - Unsicher: kleinster Abstand zwischen den zwei besten Genres.
+
+    Von Duplikaten kommt nur die beste Fassung (die behaltene Datei der Gruppe), und keine Kopie eines
+    Liedes, das schon bewertet ist oder gerade in der Schlange liegt (ausschliessen).
     """
     bewertet = {r[0] for r in con.execute("SELECT DISTINCT lied_id FROM etiketten")}
     # „Später“ heißt später: nach ein paar Tagen darf ein übersprungenes Lied wiederkommen
     uebersprungen = {r[0] for r in con.execute("SELECT lied_id FROM uebersprungen WHERE ts > ?",
                                                 (time.time() - config.SPAETER_TAGE * 86400,))}
     tabu = bewertet | uebersprungen | set(ausschliessen)
+    familie, nur_kopie = duplikate.kopien(con)
+    familie_tabu = {familie[l] for l in bewertet | set(ausschliessen) if l in familie}
     analysiert = "JOIN lieder l ON l.id={}.lied_id AND l.status='analysiert'"
 
     groesse = dict(con.execute(f"SELECT k.gruppe, COUNT(*) FROM klanggruppen k {analysiert.format('k')} "
@@ -504,7 +516,7 @@ def naechste(con, anzahl=3, ausschliessen=()):
 
     def frei(sql, *werte):
         for (lid,) in con.execute(sql, werte):
-            if lid not in tabu:
+            if lid not in tabu and lid not in nur_kopie and familie.get(lid) not in familie_tabu:
                 return lid
         return None
 
@@ -524,31 +536,33 @@ def naechste(con, anzahl=3, ausschliessen=()):
         if auto_genres and wurf < config.STICHPROBE_ANTEIL:
             g = gewichtet([(g, 1 / (1 + stich.get(g, (0, 0))[1])) for g in auto_genres])
             wahl = frei(f"SELECT v.lied_id FROM vorhersagen v {analysiert.format('v')} WHERE (v.auto=1 AND v.genre_id=?) "
-                        "OR v.ober_id=? ORDER BY random() LIMIT 50", g, g)
+                        "OR v.ober_id=? ORDER BY random() LIMIT 150", g, g)
             grund = "stichprobe"
             pruef_von[wahl] = g
         if wahl is None and offen_gruppen and (not hat_modell or wurf < 0.5):
             while offen_gruppen and wahl is None:
                 g = offen_gruppen.pop(0)
                 wahl = frei(f"SELECT k.lied_id FROM klanggruppen k {analysiert.format('k')} WHERE k.gruppe=? "
-                            "ORDER BY k.abstand LIMIT 30", g)
+                            "ORDER BY k.abstand LIMIT 90", g)
                 gruppe_von[wahl] = groesse[g]
             grund = "gruppe"
         if wahl is None and haeufig and wurf < 0.75:
             g = gewichtet(haeufig)
             wahl = frei(f"SELECT v.lied_id FROM vorhersagen v {analysiert.format('v')} WHERE v.genre_id=? AND v.auto=0 "
-                        "ORDER BY random() LIMIT 50", g)
+                        "ORDER BY random() LIMIT 150", g)
             grund = "auffuellen"
         if wahl is None and hat_modell:
             wahl = frei(f"SELECT v.lied_id FROM vorhersagen v {analysiert.format('v')} WHERE v.auto=0 "
-                        "ORDER BY v.p - coalesce(v.p2, 0) LIMIT 500")
+                        "ORDER BY v.p - coalesce(v.p2, 0) LIMIT 1500")
             grund = "unsicher"
         if wahl is None:
-            wahl = frei("SELECT id FROM lieder WHERE status='analysiert' AND emb IS NOT NULL ORDER BY random() LIMIT 200")
+            wahl = frei("SELECT id FROM lieder WHERE status='analysiert' AND emb IS NOT NULL ORDER BY random() LIMIT 600")
             grund = "zufall"
         if wahl is None:
             break
         tabu.add(wahl)
+        if wahl in familie:
+            familie_tabu.add(familie[wahl])
         ergebnis.append({"lied_id": wahl, "grund": grund, "gruppe": gruppe_von.get(wahl, 0),
                          **({"pruef_id": pruef_von[wahl]} if grund == "stichprobe" and wahl in pruef_von else {})})
     return ergebnis

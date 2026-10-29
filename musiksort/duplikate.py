@@ -195,6 +195,37 @@ class Abgelehnt(Exception):
         self.code, self.text = code, text
 
 
+def kopien(con):
+    """Wer ist eine Kopie von wem? Über alle offenen und freigegebenen Gruppen (auch Zweifelsfälle).
+
+    Rückgabe (familie, nur_kopie): familie = {lied_id: Kennung der Kopienfamilie} (Ketten über mehrere
+    Gruppen zusammengefasst), nur_kopie = Lieder, die in irgendeiner Gruppe nicht die behaltene Datei sind.
+    Für die Bewertung: nur die beste Fassung zeigen; für die Kreuzvalidierung: Familien nie aufteilen.
+    """
+    eltern = {}
+
+    def wurzel(x):
+        while eltern.get(x, x) != x:
+            eltern[x] = eltern.get(eltern[x], eltern[x])
+            x = eltern[x]
+        return x
+
+    nur_kopie, erstes = set(), {}
+    for gid, lid, behalten in con.execute(
+            "SELECT m.gruppe_id, m.lied_id, m.behalten FROM dup_mitglieder m JOIN dup_gruppen g ON g.id=m.gruppe_id "
+            "WHERE g.status IN ('offen','freigegeben')"):
+        if not behalten:
+            nur_kopie.add(lid)
+        if gid in erstes:
+            a, b = wurzel(erstes[gid]), wurzel(lid)
+            if a != b:
+                eltern[b] = a
+        else:
+            erstes[gid] = lid
+            eltern.setdefault(lid, lid)
+    return {lid: wurzel(lid) for lid in list(eltern)}, nur_kopie
+
+
 def protokoll(con, aktion, info, wer=None):
     """Jede folgenreiche Entscheidung nachvollziehbar (wer, wann, was)."""
     con.execute("INSERT INTO protokoll(ts, aktion, von, nach) VALUES (?,?,?,?)",
