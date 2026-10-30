@@ -10,7 +10,7 @@ blind gegenprüft. Bis dahin wird nichts verschoben.
 
 ## Was es kann
 
-- **Klang-Analyse** jedes Liedes mit [Essentia](https://essentia.upf.edu) (Discogs-EffNet-Steckbrief, BPM, Länge)
+- **Klang-Analyse** jedes Liedes mit [Essentia](https://essentia.upf.edu) (Discogs-EffNet-Steckbrief, BPM per TempoCNN, Länge)
 - **Gesangssprache** mit [Whisper](https://github.com/openai/whisper) (nur die Spracherkennung, Modell „tiny“) –
   trennt z. B. Deutschrap von US-Rap, die gleich klingen
 - **Bewerten-App**: Ausschnitt anhören, Genre wählen, Zurück-Knopf, Favoriten-Stern, Rückmeldung bei Stichproben
@@ -43,6 +43,8 @@ mkdir -p modelle && cd modelle
 for f in feature-extractors/discogs-effnet/discogs-effnet-bs64-1 classification-heads/genre_discogs400/genre_discogs400-discogs-effnet-1; do
   curl -fLO "https://essentia.upf.edu/models/$f.pb"; curl -fLO "https://essentia.upf.edu/models/$f.json"
 done
+curl -fLO https://essentia.upf.edu/models/tempo/tempocnn/deeptemp-k16-3.pb   # Tempo (BPM)
+curl -fLO https://essentia.upf.edu/models/tempo/tempocnn/deeptemp-k16-3.json
 cd .. && .venv/bin/python -c "from faster_whisper import download_model; download_model('tiny', output_dir='modelle/whisper-tiny')"
 ```
 
@@ -99,6 +101,7 @@ Stichproben belegen. Die Genres kommen dabei mit (lassen sich in der App umbenen
 ```bash
 .venv/bin/python -m musiksort.scan suchen          # Dateien finden
 .venv/bin/python -m musiksort.scan analysieren     # Klang-Steckbriefe
+.venv/bin/python -m musiksort.scan tempo           # BPM des Bestands mit neuem Tempo-Modell nachmessen
 .venv/bin/python -m musiksort.sprache              # Gesangssprache messen
 .venv/bin/python -m musiksort.dupauto              # Duplikat-Automatik
 .venv/bin/python -m musiksort.tags --zaehlen       # Sterne/Sprachen, die noch in die Dateien müssen

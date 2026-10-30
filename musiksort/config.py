@@ -48,6 +48,9 @@ MODELLE = PROJEKT / "modelle"
 EFFNET = MODELLE / "discogs-effnet-bs64-1.pb"
 DISCOGS400 = MODELLE / "genre_discogs400-discogs-effnet-1.pb"
 DISCOGS400_JSON = MODELLE / "genre_discogs400-discogs-effnet-1.json"
+TEMPO = MODELLE / "deeptemp-k16-3.pb"   # TempoCNN: 91 % genau gegen BPM-Tags (Percival 17 %, n=208, 30.10.2026)
+TEMPO_STAND = TEMPO.stem              # steht in lieder.tempo_stand: welches Modell das BPM gemessen hat
+TEMPO_SR = 11025
 WHISPER = MODELLE / "whisper-tiny"   # Spracherkennung (sprache.py), faster-whisper/CTranslate2
 
 SR = 16000                 # Abtastrate für Modell und Fingerabdruck
