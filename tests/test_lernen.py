@@ -458,3 +458,25 @@ def test_widerlegtes_genre_wird_weiter_geprueft_und_kann_sich_erholen(con, monke
     assert st["schwelle"] is not None and st["widerlegt"] == 0 and st["pruef_schwelle"] is None
     assert con.execute("SELECT COUNT(*) FROM vorhersagen WHERE auto=1 AND genre_id=?", (gids[0],)).fetchone()[0] > 30
     assert con.execute("SELECT COUNT(*) FROM vorhersagen WHERE pruef_id IS NOT NULL").fetchone()[0] == 0
+
+
+def test_backlog_fragt_gezielt_zwischen_verwechselten_genres(con, monkeypatch):
+    wahr, gids = _wolken(con, n_pro=60)
+    for w in range(3):
+        for lid in [l for l, x in wahr.items() if x == w][:10]:
+            _bewerte(con, lid, gids[w])
+    con.commit()
+    lernen.trainieren(con)
+    zwischen = [r[0] for r in con.execute("SELECT lied_id FROM vorhersagen WHERE auto=0 LIMIT 5")]
+    assert zwischen
+    con.executemany("UPDATE vorhersagen SET genre_id=?, zweit_id=? WHERE lied_id=?",
+                    [(gids[0], gids[1], l) for l in zwischen])
+    con.execute("DELETE FROM verwechslungen")
+    con.execute("INSERT INTO verwechslungen VALUES (?,?,0.1,40)", (gids[1], gids[0]))
+    con.commit()
+    monkeypatch.setattr(config, "STICHPROBE_ANTEIL", 0.0)
+    monkeypatch.setattr(config, "VERWECHSLER_ANTEIL", 1.0)
+    karten = [k for _ in range(5) for k in lernen.naechste(con, 3) if k["grund"] == "verwechsler"]
+    paar = {gids[0], gids[1]}
+    assert karten and all({*con.execute("SELECT genre_id, zweit_id FROM vorhersagen WHERE lied_id=?",
+                                        (k["lied_id"],)).fetchone()} == paar for k in karten)

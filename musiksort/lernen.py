@@ -383,7 +383,7 @@ def trainieren(con=None, cv_erzwingen=False, trocken=False):
                     if s:
                         # nie unter 50 %: bei vielen Genres wäre die Schwelle sonst kaum mehr als „am ehesten g“
                         schwellen[g], quoten[g], n_sicher[g] = max(s[0], 0.5), s[1], s[2]
-            verwechselt = verwechslungen_finden(wahr, vorh)
+            verwechselt = verwechslungen_finden(wahr, vorh, ab_anteil=config.VERWECHSLUNG_MERKEN)
             # Ausreißer-Grenze: Nähe zum Genre-Zentrum, ohne das Lied selbst (Leave-one-out)
             for g in schwellen:
                 mindest[g] = _naehe_grenze(E[y == g])
@@ -549,6 +549,9 @@ def naechste(con, anzahl=3, ausschliessen=()):
       richtige Antwort die meisten Lieder freischaltet (stichproben_gewichte). Ist ein großes Genre
       nur noch wenige Antworten vom Beleg entfernt, kommen nur noch Stichproben (Vorrang).
     - Klanggruppe: noch unbenannte Gruppen, größte zuerst.
+    - Verwechsler (~25 % der übrigen): Lied, bei dem das Modell genau zwischen einem oft verwechselten
+      Paar schwankt (z. B. House/Tech House), Paar gewichtet nach Anteil × Bewertungen. Jede Antwort
+      schärft so genau die Grenze, an der das Modell scheitert.
     - Mehr Beispiele: Genres, die laut Modell häufig sind, aber < 30 Bewertungen haben.
     - Unsicher: kleinster Abstand zwischen den zwei besten Genres.
 
@@ -586,6 +589,7 @@ def naechste(con, anzahl=3, ausschliessen=()):
     n_bew = dict(con.execute("SELECT genre_id, COUNT(*) FROM etiketten WHERE haupt=1 GROUP BY genre_id").fetchall())
     haeufig = [(g, n) for g, n in con.execute("SELECT genre_id, COUNT(*) FROM vorhersagen GROUP BY genre_id")
                if n >= 50 and n_bew.get(g, 0) < config.MIN_BEWERTUNGEN_AUTO]
+    paare = [((a, b), anteil * n) for a, b, anteil, n in con.execute("SELECT a, b, anteil, n FROM verwechslungen")]
     zufall = random.Random(time.time())
 
     def frei(sql, *werte):
@@ -620,6 +624,12 @@ def naechste(con, anzahl=3, ausschliessen=()):
                             "ORDER BY k.abstand LIMIT 90", g)
                 gruppe_von[wahl] = groesse[g]
             grund = "gruppe"
+        if wahl is None and paare and zufall.random() < config.VERWECHSLER_ANTEIL:
+            a, b = gewichtet(paare)
+            wahl = frei(f"SELECT v.lied_id FROM vorhersagen v {analysiert.format('v')} WHERE v.auto=0 "
+                        "AND ((v.genre_id=? AND v.zweit_id=?) OR (v.genre_id=? AND v.zweit_id=?)) "
+                        "ORDER BY v.p - coalesce(v.p2, 0) LIMIT 300", a, b, b, a)
+            grund = "verwechsler"
         if wahl is None and haeufig and wurf < 0.75:
             g = gewichtet(haeufig)
             wahl = frei(f"SELECT v.lied_id FROM vorhersagen v {analysiert.format('v')} WHERE v.genre_id=? AND v.auto=0 "

@@ -487,3 +487,12 @@ def test_kreis_wuerde_alles_loeschen_abgelehnt(umgebung):
     assert r.status_code == 409
     assert con.execute("SELECT status FROM dup_gruppen WHERE id=?", (g2,)).fetchone()[0] == "offen"
     assert con.execute("SELECT behalten FROM dup_mitglieder WHERE gruppe_id=? AND lied_id=?", (g2, b)).fetchone()[0] == 1
+
+
+def test_zusammenlege_hinweis_nur_bei_starker_verwechslung(umgebung):
+    client, con, lid, gid = umgebung
+    g2, g3 = (con.execute("INSERT INTO genres(name) VALUES (?)", (n,)).lastrowid for n in ("A", "B"))
+    con.execute("INSERT INTO verwechslungen VALUES (?,?,0.1,40)", (gid, g2))   # nur gezielt abfragen
+    con.execute("INSERT INTO verwechslungen VALUES (?,?,0.3,40)", (gid, g3))   # auch Hinweis
+    con.commit()
+    assert [(x["a"], x["b"]) for x in client.get("/api/verwechslungen").json()] == [(gid, g3)]

@@ -243,7 +243,8 @@ def api_verwechslungen():
     c = con()
     pfade = _genre_pfade(c)
     return [{"a": r[0], "b": r[1], "anteil": r[2], "n": r[3], "a_pfad": pfade[r[0]], "b_pfad": pfade[r[1]]}
-            for r in c.execute("SELECT a, b, anteil, n FROM verwechslungen ORDER BY anteil DESC")
+            for r in c.execute("SELECT a, b, anteil, n FROM verwechslungen WHERE anteil >= ? ORDER BY anteil DESC",
+                               (config.VERWECHSLUNG_HINWEIS,))
             if r[0] in pfade and r[1] in pfade]
 
 
