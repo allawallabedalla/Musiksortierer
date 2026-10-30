@@ -173,13 +173,28 @@ def _init_worker():
     import essentia
     essentia.log.infoActive = False
     essentia.log.warningActive = False
-    from essentia.standard import (PercivalBpmEstimator, TensorflowPredict2D,
-                                   TensorflowPredictEffnetDiscogs)
+    from essentia.standard import TensorflowPredict2D, TensorflowPredictEffnetDiscogs
+    _tempo_laden()
     _modell["effnet"] = TensorflowPredictEffnetDiscogs(graphFilename=str(config.EFFNET), output="PartitionedCall:1")
     _modell["kopf"] = TensorflowPredict2D(graphFilename=str(config.DISCOGS400),
                                           input="serving_default_model_Placeholder", output="PartitionedCall:0")
-    _modell["bpm"] = PercivalBpmEstimator(sampleRate=config.SR)
     _modell["klassen"] = json.load(open(config.DISCOGS400_JSON))["classes"]
+
+
+def _tempo_laden():
+    os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
+    import essentia
+    essentia.log.infoActive = False
+    essentia.log.warningActive = False
+    from essentia.standard import Resample, TempoCNN
+    _modell["tempo"] = TempoCNN(graphFilename=str(config.TEMPO))
+    _modell["resample"] = Resample(inputSampleRate=config.SR, outputSampleRate=config.TEMPO_SR)
+
+
+def _tempo(teil):
+    """BPM mit TempoCNN (hört 11025 Hz). Doppel-/Halbtempo bleibt möglich (Dubstep 70/140), ist aber selten."""
+    bpm = float(_modell["tempo"](_modell["resample"](teil))[0])
+    return round(bpm, 1) if bpm > 0 else None
 
 
 def _ffprobe(pfad):
@@ -341,13 +356,13 @@ def _analysiere(zeile):
         # Das Klang-Modell kostet ~1,5 s je Minute Audio: es hört nur bis zu
         # 5 × 30 s aus dem vollen Hauptteil statt des ganzen Lieds (Mixe bis 15 min)
         proben, bpm_teil = hauptteil_proben(a)
-        bpm = float(_modell["bpm"](bpm_teil)) or None
+        bpm = _tempo(bpm_teil)
         kern = _modell["effnet"](proben)  # (Zeitfenster, 1280)
         mittel = kern.mean(0)
         p = _modell["kopf"](kern).mean(0)
         top = [(_modell["klassen"][i], round(float(p[i]), 3)) for i in p.argsort()[::-1][:5]]
         info.update(
-            status="analysiert", fehler=None, bpm=bpm,
+            status="analysiert", fehler=None, bpm=bpm, tempo_stand=config.TEMPO_STAND,
             snippet_start=start, snippet_quelle=quelle,
             emb=mittel.astype(np.float16).tobytes(), discogs=json.dumps(top, ensure_ascii=False),
             fp=fp.tobytes(), analysiert=time.time(), analyse_s=round(time.time() - t0, 2),
@@ -450,6 +465,56 @@ def analysieren(anzahl=None, zufall=False, jobs=2):
     return fertig
 
 
+def _nachmessen(zeile):
+    lied_id, pfad, dauer = zeile
+    try:
+        a = _dekodieren(pfad, dauer)
+        return lied_id, _tempo(hauptteil_proben(a)[1]), None
+    except Exception as e:
+        return lied_id, None, f"{type(e).__name__}: {e}"[:200]
+
+
+def tempo_nachmessen(anzahl=None, jobs=2, ausgabe=print):
+    """BPM aller analysierten Lieder mit dem aktuellen Tempo-Modell neu messen (nur bpm + tempo_stand).
+    Gleiche Stelle wie bei der Analyse (Hauptteil). Abbrechbar: beim nächsten Lauf geht es weiter.
+    Fehler (NAS-Aussetzer) lassen das alte BPM stehen; das Lied kommt beim nächsten Lauf wieder dran."""
+    con = db.verbinden()
+    zeilen = con.execute("SELECT id, pfad, dauer FROM lieder WHERE status='analysiert' "
+                         "AND tempo_stand IS NOT ? ORDER BY id", (config.TEMPO_STAND,)).fetchall()
+    if anzahl:
+        zeilen = zeilen[:anzahl]
+    if not zeilen:
+        ausgabe("nichts zu tun")
+        return 0
+    if not nas_da():
+        raise SystemExit(f"{config.MEDIA_ROOT} ist nicht eingebunden")
+    auftraege = []
+    for r in zeilen:
+        try:
+            auftraege.append((r["id"], str(config.medienpfad(r["pfad"])), r["dauer"]))
+        except ValueError:
+            continue
+    ausgabe(f"messe Tempo von {len(auftraege)} Liedern mit {jobs} Prozessen")
+    t0, fertig, fehler = time.time(), 0, 0
+    kontext = multiprocessing.get_context("forkserver")
+    with ProcessPoolExecutor(jobs, mp_context=kontext, initializer=_tempo_laden, max_tasks_per_child=500) as pool:
+        for lied_id, bpm, f in pool.map(_nachmessen, auftraege, chunksize=4):
+            if f:
+                fehler += 1
+                if fehler % 50 == 1 and not nas_da():
+                    raise SystemExit("NAS weg: Abbruch, Rest beim nächsten Lauf")
+                continue
+            with con:
+                con.execute("UPDATE lieder SET bpm=?, tempo_stand=? WHERE id=?", (bpm, config.TEMPO_STAND, lied_id))
+            fertig += 1
+            if fertig % 200 == 0:
+                rate = fertig / (time.time() - t0)
+                ausgabe(f"{fertig}/{len(auftraege)}  {rate * 3600:.0f}/h  Fehler {fehler}  "
+                        f"Rest ~{(len(auftraege) - fertig) / rate / 3600:.1f} h")
+    ausgabe(f"fertig: {fertig}, Fehler {fehler}")
+    return fertig
+
+
 def videos_aussortieren(ausgabe=print):
     """Schon erfasste Dateien in Containern, die Video tragen können, nachprüfen: mit Videospur → „video“.
     Bewertungen bleiben stehen (nichts gelöscht); App, Training und Duplikate sehen nur „analysiert“."""
@@ -474,7 +539,7 @@ def videos_aussortieren(ausgabe=print):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("schritt", choices=["suchen", "analysieren", "videos", "stumm"])
+    ap.add_argument("schritt", choices=["suchen", "analysieren", "videos", "stumm", "tempo"])
     ap.add_argument("ids", nargs="*", type=int, help="bei „stumm“: diese Lied-IDs nachprüfen")
     ap.add_argument("-n", "--anzahl", type=int)
     ap.add_argument("--zufall", action="store_true")
@@ -486,6 +551,8 @@ def main():
         videos_aussortieren()
     elif a.schritt == "stumm":
         stumme_aussortieren(a.ids)
+    elif a.schritt == "tempo":
+        tempo_nachmessen(a.anzahl, a.jobs)
     elif analysieren(a.anzahl, a.zufall, a.jobs):
         # nur wenn etwas dazukam: Duplikate neu berechnen (sonst stündlich unnötig)
         from . import duplikate
