@@ -75,7 +75,8 @@ async function laden() {
   $("#regel").textContent = `Selbst sortieren ab ${s.bewertungen_mind} fehlerfreien Bewertungen je Genre (vorsichtige Trefferquote ≥ ${pz(s.ziel)}); verschoben wird erst nach ≥ ${s.stichprobe_min} Stichproben mit ≥ ${pz(s.stichprobe_ziel)}.`;
   $("#genres").innerHTML = s.modell.map(m => {
     const fehlt = Math.max(0, s.bewertungen_mind - (m.n || 0));
-    const stand = m.belegt && m.schwelle != null ? `<span class="gut">sortiert selbst</span>`
+    const stand = m.widerlegt ? `<span class="warte">Stichproben zu oft falsch, wird weiter geprüft (${m.stichprobe_ok || 0}/${m.stichprobe_n || 0} richtig)</span>`
+      : m.belegt && m.schwelle != null ? `<span class="gut">sortiert selbst</span>`
       : m.belegt && m.ober_schwelle != null ? `<span class="gut">sortiert grob (Obergenre)</span>`
       : m.ober_schwelle != null && m.schwelle == null ? `<span class="warte">grob bereit, wartet auf Stichproben (${m.stichprobe_n || 0}/${m.stichprobe_noetig ?? "?"})</span>`
       : m.schwelle != null ? `<span class="warte">wartet auf Stichproben (${m.stichprobe_n || 0}/${m.stichprobe_noetig ?? "?"})</span>`

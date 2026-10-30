@@ -80,6 +80,7 @@ PAPIERKORB = "_papierkorb"   # Ordner in Media für aussortierte Dateien (papier
 PAPIERKORB_TAGE = 30        # erst danach endgültig löschen
 DUP_AUTO_D_MIN = 200       # so viele eigene Duplikat-Entscheidungen, bevor Stufe D (Lernen) mitentscheidet
 DUP_AUTO_D_ZIEL = 0.98     # vorsichtige Trefferquote, ab der Stufe D entscheidet
+MODELL_C = 8.0            # Regularisierung des Genre-Modells (C=2 → 8: +2,4 Punkte Treffer, Messung 30.10.2026)
 CV_ALLE = 25               # teure Kreuzvalidierung nur alle so vielen neuen Bewertungen
 
 PORT = int(os.environ.get("MUSIKSORT_PORT", "8097"))

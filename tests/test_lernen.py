@@ -423,3 +423,38 @@ def test_stichproben_dorthin_wo_sie_am_meisten_freischalten():
     assert anteil["hh"] + anteil["dhh"] > 0.9      # fast alle Stichproben gehen dahin, wo 9 Antworten ~8.200 Lieder belegen
     assert 0 < anteil["reggae"] < 0.02             # belegt: nur noch selten nachgeprüft, aber nie ganz vergessen
     assert w["rock"] > w["el"] > 0
+
+
+def test_widerlegtes_genre_wird_weiter_geprueft_und_kann_sich_erholen(con, monkeypatch):
+    """Früher bekam ein widerlegtes Genre keine Stichproben mehr und blieb für immer aus (Electronic, 29.10.)."""
+    wahr, gids = _wolken(con)
+    je = {w: [l for l, x in wahr.items() if x == w] for w in range(3)}
+    for w in range(3):
+        for lid in je[w][:40]:
+            _bewerte(con, lid, gids[w])
+    # 3 von 12 Stichproben falsch → G0 widerlegt
+    con.executemany("INSERT INTO stichproben(lied_id, vorhergesagt, gewaehlt, ts) VALUES (?,?,?,0)",
+                    [(je[0][50 + i], gids[0], gids[1] if i < 3 else gids[0]) for i in range(12)])
+    con.commit()
+    lernen.trainieren(con)
+    st = con.execute("SELECT * FROM modell_stand WHERE genre_id=?", (gids[0],)).fetchone()
+    assert st["schwelle"] is None and st["widerlegt"] == 1 and st["pruef_schwelle"] is not None
+    assert con.execute("SELECT COUNT(*) FROM vorhersagen WHERE auto=1 AND genre_id=?", (gids[0],)).fetchone()[0] == 0
+    kandidaten = {r[0] for r in con.execute("SELECT lied_id FROM vorhersagen WHERE pruef_id=?", (gids[0],))}
+    assert len(kandidaten) > 30 and all(wahr[l] == 0 for l in kandidaten)
+    # „Weiter“ zieht weiter Stichproben für G0
+    monkeypatch.setattr(config, "STICHPROBE_ANTEIL", 1.0)
+    gezogen = [x for _ in range(30) for x in lernen.naechste(con, 3) if x["grund"] == "stichprobe"]
+    assert any(x.get("pruef_id") == gids[0] for x in gezogen)
+    # ein Training ohne Kreuzvalidierung behält die ruhende Schwelle
+    lernen.trainieren(con)
+    assert con.execute("SELECT pruef_schwelle FROM modell_stand WHERE genre_id=?", (gids[0],)).fetchone()[0] is not None
+    # genug richtige Stichproben danach → wieder aktiv
+    con.executemany("INSERT INTO stichproben(lied_id, vorhergesagt, gewaehlt, ts) VALUES (?,?,?,0)",
+                    [(l, gids[0], gids[0]) for l in je[0][62:100]])
+    con.commit()
+    lernen.trainieren(con)
+    st = con.execute("SELECT * FROM modell_stand WHERE genre_id=?", (gids[0],)).fetchone()
+    assert st["schwelle"] is not None and st["widerlegt"] == 0 and st["pruef_schwelle"] is None
+    assert con.execute("SELECT COUNT(*) FROM vorhersagen WHERE auto=1 AND genre_id=?", (gids[0],)).fetchone()[0] > 30
+    assert con.execute("SELECT COUNT(*) FROM vorhersagen WHERE pruef_id IS NOT NULL").fetchone()[0] == 0
