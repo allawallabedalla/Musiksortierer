@@ -261,6 +261,8 @@ async function einmal(schluessel, fn) {
 const GRUND = {
   gruppe: ["fa-regular fa-folder-open", g => `Neue Klanggruppe · ~${g.gruppe} ähnliche`],
   unsicher: ["fa-regular fa-circle-question", () => "Was ist das?"],
+  verwechsler: ["fa-regular fa-clone", l => l.vorschlag.length > 1
+    ? `Schwer zu trennen: ${l.vorschlag[0].pfad.split(" › ").pop()} oder ${l.vorschlag[1].pfad.split(" › ").pop()}?` : "Schwer zu trennen"],
   stichprobe: ["fa-regular fa-square-check", () => "Stichprobe: was ist es?"],
   auffuellen: ["fa-regular fa-square-plus", () => "Mehr Beispiele gesucht"],
   zufall: ["fa-regular fa-circle-dot", () => "Neu"],
