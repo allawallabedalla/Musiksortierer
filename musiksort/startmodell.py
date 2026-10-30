@@ -82,7 +82,7 @@ def exportieren(con=None, ordner=ORDNER):
     liste = sorted(set(genres))
     y = np.array([liste.index(g) for g in genres])
     X = lernen._merkmale(E.astype(np.float32), dauer, spr.astype(np.float32) * config.SPRACHE_GEWICHT)
-    modell = LogisticRegression(C=2.0, max_iter=2000, class_weight="balanced").fit(X, y)
+    modell = LogisticRegression(C=config.MODELL_C, max_iter=2000, class_weight="balanced").fit(X, y)
     ordner.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(ordner / "steckbriefe.npz", klang=E, dauer=dauer, sprache=spr, genre=y.astype(np.int16))
     np.savez_compressed(ordner / "modell.npz", gewichte=modell.coef_.astype(np.float32),
@@ -91,7 +91,7 @@ def exportieren(con=None, ordner=ORDNER):
             "je_genre": {g: genres.count(g) for g in liste}, "merkmale": lernen.MERKMALE,
             "spalten": {"klang": 1280, "laenge": 4, "sprache": sprache.BREITE, "sprachen": list(sprache.SPRACHEN)},
             "gewichte": {"laenge": config.LAENGE_GEWICHT, "sprache": config.SPRACHE_GEWICHT},
-            "modell": "LogisticRegression(C=2, class_weight=balanced) auf [klang, lernen.laenge_merkmale(dauer), "
+            "modell": f"LogisticRegression(C={config.MODELL_C:g}, class_weight=balanced) auf [klang, lernen.laenge_merkmale(dauer), "
                       "sprache × Gewicht]; P = softmax(X @ gewichte.T + achsen)"}
     (ordner / "info.json").write_text(json.dumps(info, ensure_ascii=False, indent=1) + "\n")
     return info

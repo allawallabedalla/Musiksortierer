@@ -67,7 +67,8 @@ CREATE TABLE IF NOT EXISTS vorhersagen (
     genre_id INTEGER, p REAL, zweit_id INTEGER, p2 REAL,
     auto INTEGER NOT NULL DEFAULT 0,   -- 1 = sicher genug für automatisch
     ts REAL,
-    ober_id INTEGER, ober_p REAL       -- grob einsortiert: sicheres Obergenre, wenn das Unter-Genre unsicher ist
+    ober_id INTEGER, ober_p REAL,      -- grob einsortiert: sicheres Obergenre, wenn das Unter-Genre unsicher ist
+    pruef_id INTEGER                   -- Genre (fein/grob), das die Stichproben widerlegt haben: wird weiter geprüft
 );
 
 CREATE TABLE IF NOT EXISTS modell_stand (
@@ -75,7 +76,9 @@ CREATE TABLE IF NOT EXISTS modell_stand (
     n INTEGER, schwelle REAL, trefferquote REAL, n_sicher INTEGER,
     stichprobe_ok INTEGER, stichprobe_n INTEGER, ts REAL,
     quote_roh REAL, mindest REAL, belegt INTEGER NOT NULL DEFAULT 0,
-    ober_schwelle REAL, ober_quote REAL, ober_n INTEGER, ober_mindest REAL  -- als Obergenre (ganzer Teilbaum)
+    ober_schwelle REAL, ober_quote REAL, ober_n INTEGER, ober_mindest REAL,  -- als Obergenre (ganzer Teilbaum)
+    -- von Stichproben widerlegt: Schwellen ruhen hier, damit weiter geprüft wird (erholt sich das Genre: wieder aktiv)
+    widerlegt INTEGER NOT NULL DEFAULT 0, pruef_schwelle REAL, pruef_ober_schwelle REAL
 );
 
 -- Klanggruppen (k-Means auf den Steckbriefen), berechnet von `python -m musiksort.lernen cluster`
@@ -180,9 +183,10 @@ def _nachruesten(con):
     for spalte, typ in (("quote_roh", "REAL"), ("mindest", "REAL"), ("belegt", "INTEGER NOT NULL DEFAULT 0")):
         if spalte not in spalten:
             con.execute(f"ALTER TABLE modell_stand ADD COLUMN {spalte} {typ}")
-    for tabelle, neu in (("vorhersagen", (("ober_id", "INTEGER"), ("ober_p", "REAL"))),
+    for tabelle, neu in (("vorhersagen", (("ober_id", "INTEGER"), ("ober_p", "REAL"), ("pruef_id", "INTEGER"))),
                          ("modell_stand", (("ober_schwelle", "REAL"), ("ober_quote", "REAL"), ("ober_n", "INTEGER"),
-                                           ("ober_mindest", "REAL")))):
+                                           ("ober_mindest", "REAL"), ("widerlegt", "INTEGER NOT NULL DEFAULT 0"),
+                                           ("pruef_schwelle", "REAL"), ("pruef_ober_schwelle", "REAL")))):
         spalten = {r[1] for r in con.execute(f"PRAGMA table_info({tabelle})")}
         for spalte, typ in neu:
             if spalte not in spalten:

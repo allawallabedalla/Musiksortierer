@@ -35,7 +35,7 @@ from . import config, db, duplikate, sprache
 
 _sperre = threading.RLock()
 # Ändert sich, was das Modell sieht, sind alte Schwellen ungültig (Kreuzvalidierung neu)
-MERKMALE = "klang+laenge+sprache-1/familien"  # „/familien“: Kreuzvalidierung hält Kopien zusammen
+MERKMALE = "klang+laenge+sprache-1/familien/C8"  # „/familien“: Kreuzvalidierung hält Kopien zusammen; C8: config.MODELL_C
 
 
 class Bestand:
@@ -243,7 +243,7 @@ def _kreuzvalidierung(X, y, zaehl, familien=None):
     gross = np.array([zaehl[g] >= 5 for g in y])
     if len(set(y[gross])) < 2:
         return None
-    modell = LogisticRegression(C=2.0, max_iter=2000, class_weight="balanced")
+    modell = LogisticRegression(C=config.MODELL_C, max_iter=2000, class_weight="balanced")
     if familien is None:
         teile, gruppen = StratifiedKFold(5, shuffle=True, random_state=0), None
     else:
@@ -400,14 +400,24 @@ def trainieren(con=None, cv_erzwingen=False, trocken=False):
             if r["ober_schwelle"] is not None:
                 ober[r["genre_id"]] = (r["ober_schwelle"], r["ober_quote"], r["ober_n"])
                 ober_mindest[r["genre_id"]] = r["ober_mindest"]
+            # widerlegte Genres: Schwellen ruhen, die Stichproben unten entscheiden jedes Mal neu
+            if r["pruef_schwelle"] is not None:
+                schwellen[r["genre_id"]], mindest[r["genre_id"]] = r["pruef_schwelle"], r["mindest"]
+                quoten[r["genre_id"]], n_sicher[r["genre_id"]] = r["trefferquote"], r["n_sicher"]
+            if r["pruef_ober_schwelle"] is not None:
+                ober[r["genre_id"]] = (r["pruef_ober_schwelle"], r["ober_quote"], r["ober_n"])
+                ober_mindest[r["genre_id"]] = r["ober_mindest"]
 
-    # Stichproben: widerlegt → aus; positiv belegt → darf später physisch verschoben werden
-    belegt = {}
+    # Stichproben: widerlegt → aus; positiv belegt → darf später physisch verschoben werden.
+    # Widerlegte Genres bleiben Prüf-Kandidaten (pruef_id): ohne neue Stichproben könnten sie sich nie erholen.
+    belegt, pruef_fein, pruef_ober = {}, {}, {}
     for g in set(schwellen) | set(ober):
         ok, n = stich.get(g, (0, 0))
         if n >= config.STICHPROBE_MIN and wilson_oben(ok, n) < config.ZIEL_TREFFERQUOTE:
-            schwellen.pop(g, None)
-            ober.pop(g, None)
+            if g in schwellen:
+                pruef_fein[g] = schwellen.pop(g)
+            if g in ober:
+                pruef_ober[g] = ober.pop(g)
             continue
         belegt[g] = int(n >= config.STICHPROBE_MIN and wilson_unten(ok, n) >= config.STICHPROBE_ZIEL)
 
@@ -418,7 +428,7 @@ def trainieren(con=None, cv_erzwingen=False, trocken=False):
         X_fit = np.vstack([X, _merkmale(start[0][nimm], start[1][nimm], start[2][nimm])])
         y_fit = np.concatenate([y, start[3][nimm]])
         gewicht = np.concatenate([gewicht, np.full(int(nimm.sum()), config.START_GEWICHT)])
-    modell = LogisticRegression(C=2.0, max_iter=2000, class_weight="balanced").fit(X_fit, y_fit, sample_weight=gewicht)
+    modell = LogisticRegression(C=config.MODELL_C, max_iter=2000, class_weight="balanced").fit(X_fit, y_fit, sample_weight=gewicht)
     klassen = [int(k) for k in modell.classes_]
     zentren = np.zeros((len(klassen), E.shape[1]), np.float32)
     for j, g in enumerate(klassen):
@@ -428,7 +438,7 @@ def trainieren(con=None, cv_erzwingen=False, trocken=False):
     # Obergenre-Stufe: Spalten des Teilbaums und Klang-Zentrum je Obergenre
     index = {g: j for j, g in enumerate(klassen)}
     ober_spalten, ober_zentrum = {}, {}
-    for a in ober:
+    for a in set(ober) | set(pruef_ober):
         spalten = [index[g] for g in teil.get(a, {a}) if g in index]
         if len(spalten) < 2:
             continue
@@ -437,6 +447,9 @@ def trainieren(con=None, cv_erzwingen=False, trocken=False):
         ober_zentrum[a] = summe / (np.linalg.norm(summe) + 1e-9)
 
     bewertet = {e["lied_id"] for e in alle_et}
+    alle_fein = {**schwellen, **pruef_fein}
+    alle_ober = {a: s[0] for a, s in {**ober, **pruef_ober}.items()}
+    nur_ober = {a: s[0] for a, s in ober.items()}
     zeilen = []
     for start in range(0, len(ids), 20000):
         teil_x = X_alle[start:start + 20000].astype(np.float32)
@@ -445,30 +458,41 @@ def trainieren(con=None, cv_erzwingen=False, trocken=False):
         p_ober = {a: P[:, sp].sum(1) for a, sp in ober_spalten.items()}
         n_ober = {a: teil_x @ z for a, z in ober_zentrum.items()}
         top = np.argsort(-P, axis=1)[:, :2]
+        def einordnen(k, j1, g1, fein, grob):
+            """(auto, ober_id, ober_p) mit diesen Schwellen; selbst bewertete Lieder nie."""
+            if int(ids[start + k]) in bewertet:
+                return 0, None, None
+            if g1 in fein and P[k, j1] >= fein[g1] and naehe[k, j1] >= mindest.get(g1, 1.0):
+                return 1, None, None
+            a, gesehen = g1, set()   # grob: nächstes sicheres Obergenre über dem wahrscheinlichsten Genre
+            while a is not None and a not in gesehen:
+                gesehen.add(a)
+                if a in grob and a in p_ober and p_ober[a][k] >= grob[a] and n_ober[a][k] >= ober_mindest.get(a, 1.0):
+                    return 0, a, float(p_ober[a][k])
+                a = eltern.get(a)
+            return 0, None, None
+
         for k in range(P.shape[0]):
             j1, j2 = top[k, 0], top[k, 1]
             g1, g2 = klassen[j1], klassen[j2]
             p1, p2 = float(P[k, j1]), float(P[k, j2])
             lid = int(ids[start + k])
-            # selbst bewertete Lieder zählen nie als „automatisch“
-            auto = int(g1 in schwellen and p1 >= schwellen[g1] and naehe[k, j1] >= mindest.get(g1, 1.0)
-                       and lid not in bewertet)
-            ober_id = ober_p = None
-            if not auto and lid not in bewertet:  # grob: nächstes sicheres Obergenre über dem wahrscheinlichsten Genre
-                a, gesehen = g1, set()
-                while a is not None and a not in gesehen:
-                    gesehen.add(a)
-                    if a in p_ober and p_ober[a][k] >= ober[a][0] and n_ober[a][k] >= ober_mindest.get(a, 1.0):
-                        ober_id, ober_p = a, float(p_ober[a][k])
-                        break
-                    a = eltern.get(a)
-            zeilen.append((lid, g1, p1, g2, p2, auto, jetzt, ober_id, ober_p))
+            auto, ober_id, ober_p = einordnen(k, j1, g1, schwellen, nur_ober)
+            pruef_id = None
+            if pruef_fein or pruef_ober:  # was ein widerlegtes Genre bekäme: Kandidat für weitere Stichproben
+                a2, o2, _ = einordnen(k, j1, g1, alle_fein, alle_ober)
+                if a2 and g1 in pruef_fein:
+                    pruef_id = g1
+                elif not a2 and o2 in pruef_ober:
+                    pruef_id = o2
+            zeilen.append((lid, g1, p1, g2, p2, auto, jetzt, ober_id, ober_p, pruef_id))
 
     if trocken:
         auto_n = collections.Counter(z[1] for z in zeilen if z[5])
         ober_n = collections.Counter(z[7] for z in zeilen if z[7] is not None)
-        return {"auto": dict(auto_n), "ober": dict(ober_n), "ober_schwellen": ober, "schwellen": schwellen,
-                "belegt": belegt}
+        pruef_n = collections.Counter(z[9] for z in zeilen if z[9] is not None)
+        return {"auto": dict(auto_n), "ober": dict(ober_n), "pruef": dict(pruef_n), "ober_schwellen": ober,
+                "schwellen": schwellen, "belegt": belegt}
 
     with _sperre:
         if not _schreiben_beginnen(con, genre_stand):
@@ -477,16 +501,18 @@ def trainieren(con=None, cv_erzwingen=False, trocken=False):
         con.execute("DELETE FROM modell_stand")
         con.executemany(
             "INSERT INTO modell_stand(genre_id, n, schwelle, trefferquote, n_sicher, stichprobe_ok, stichprobe_n, ts, "
-            "quote_roh, mindest, belegt, ober_schwelle, ober_quote, ober_n, ober_mindest) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "quote_roh, mindest, belegt, ober_schwelle, ober_quote, ober_n, ober_mindest, widerlegt, pruef_schwelle, "
+            "pruef_ober_schwelle) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             [(g, zaehl.get(g, 0), schwellen.get(g), quoten.get(g), n_sicher.get(g), *stich.get(g, (0, 0)), jetzt,
               roh.get(g), mindest.get(g), belegt.get(g, 0), *(ober[g] if g in ober else (None, None, None)),
-              ober_mindest.get(g) if g in ober else None)
-             for g in set(zaehl) | set(ober)])
+              ober_mindest.get(g) if g in ober or g in pruef_ober else None,
+              int(g in pruef_fein or g in pruef_ober), pruef_fein.get(g), pruef_ober[g][0] if g in pruef_ober else None)
+             for g in set(zaehl) | set(ober) | set(pruef_fein) | set(pruef_ober)])
         if verwechselt is not None:
             con.execute("DELETE FROM verwechslungen")
             con.executemany("INSERT INTO verwechslungen VALUES (?,?,?,?)", verwechselt)
-        con.executemany("INSERT INTO vorhersagen(lied_id, genre_id, p, zweit_id, p2, auto, ts, ober_id, ober_p) "
-                        "VALUES (?,?,?,?,?,?,?,?,?)", zeilen)
+        con.executemany("INSERT INTO vorhersagen(lied_id, genre_id, p, zweit_id, p2, auto, ts, ober_id, ober_p, pruef_id) "
+                        "VALUES (?,?,?,?,?,?,?,?,?,?)", zeilen)
         if cv_faellig:
             _info(con, "cv_bewertungen", len(et))
             _info(con, "cv_reif", json.dumps(reif))
@@ -548,8 +574,10 @@ def naechste(con, anzahl=3, ausschliessen=()):
     hat_modell = con.execute("SELECT 1 FROM vorhersagen LIMIT 1").fetchone() is not None
     stich = _stichproben(con)
     # geprüft wird jede Stufe: fein (auto) und grob (Obergenre)
+    # widerlegte Genres (pruef_id) ebenso, sonst könnten sie sich nie erholen
     wartend = dict(con.execute("SELECT g, COUNT(*) FROM (SELECT genre_id g FROM vorhersagen WHERE auto=1 "
-                               "UNION ALL SELECT ober_id FROM vorhersagen WHERE ober_id IS NOT NULL) GROUP BY g"))
+                               "UNION ALL SELECT ober_id FROM vorhersagen WHERE ober_id IS NOT NULL "
+                               "UNION ALL SELECT pruef_id FROM vorhersagen WHERE pruef_id IS NOT NULL) GROUP BY g"))
     auto_genres = stichproben_gewichte(wartend, stich)
     # Vorrang: ein großes Genre ist nur noch wenige richtige Antworten vom Beleg entfernt → nur Stichproben
     # für diese Genres, bis sie belegt sind (oder eine falsche Antwort den Bedarf über die Grenze treibt)
@@ -582,7 +610,7 @@ def naechste(con, anzahl=3, ausschliessen=()):
         if vorrang or (auto_genres and wurf < config.STICHPROBE_ANTEIL):
             g = gewichtet(vorrang or auto_genres)
             wahl = frei(f"SELECT v.lied_id FROM vorhersagen v {analysiert.format('v')} WHERE (v.auto=1 AND v.genre_id=?) "
-                        "OR v.ober_id=? ORDER BY random() LIMIT 150", g, g)
+                        "OR v.ober_id=? OR v.pruef_id=? ORDER BY random() LIMIT 150", g, g, g)
             grund = "stichprobe"
             pruef_von[wahl] = g
         if wahl is None and offen_gruppen and (not hat_modell or wurf < 0.5):
