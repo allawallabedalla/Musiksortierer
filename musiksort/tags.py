@@ -10,10 +10,14 @@ Je Format zwei Merkmale:
 Außerdem die erkannte Gesangssprache (sprache.py, ab SPRACHE_DATEI_P Sicherheit) als ISO-639-2-Kürzel
 („deu“, „eng“ …): ID3 TLAN, Vorbis LANGUAGE, MP4 ----:com.apple.iTunes:LANGUAGE, WMA WM/Language.
 
+Und das Tempo (TempoCNN, scan.py) als ganze BPM: ID3 TBPM, Vorbis BPM, MP4 tmpo, WMA WM/BeatsPerMinute.
+Vorhandene BPM-Tags werden überschrieben (Wunsch des Nutzers 30.10.2026); geschrieben wird nur, was
+das aktuelle Tempo-Modell gemessen hat (tempo_stand), nie Werte des alten Schätzers.
+
 Danach werden Größe/Änderungszeit in der DB nachgeführt: die nächtliche Suche hält die Datei sonst für
 geändert (neu analysieren, Duplikat-Entscheidungen ungültig).
 
-  python -m musiksort.tags            # alle ausstehenden Sterne und Sprachen schreiben (Freigabe muss beschreibbar sein)
+  python -m musiksort.tags            # alle ausstehenden Sterne, Sprachen und BPM schreiben (Freigabe muss beschreibbar sein)
   python -m musiksort.tags --zaehlen  # nur zählen
 """
 import errno
@@ -38,8 +42,8 @@ def _gruppierung(alt, an):
     return " / ".join(teile)
 
 
-def schreiben(pfad, an=None, sprache=None):
-    """Stern setzen/entfernen (an=None: unverändert) und Sprache setzen (ISO 639-2, None: unverändert).
+def schreiben(pfad, an=None, sprache=None, bpm=None):
+    """Stern setzen/entfernen (an=None: unverändert), Sprache (ISO 639-2) und BPM (ganze Zahl) setzen (None: unverändert).
 
     Rückgabe: Format-Kürzel. Wirft NurLesend bei schreibgeschützter Freigabe."""
     import mutagen
@@ -60,6 +64,8 @@ def schreiben(pfad, an=None, sprache=None):
                     del f.tags["\xa9grp"]
             if sprache:
                 f.tags["----:com.apple.iTunes:LANGUAGE"] = [MP4FreeForm(sprache.encode())]
+            if bpm:
+                f.tags["tmpo"] = [bpm]
             art = "mp4"
         elif isinstance(f, ASF):
             if an is not None:
@@ -75,12 +81,14 @@ def schreiben(pfad, an=None, sprache=None):
                     del f.tags["WM/SharedUserRating"]
             if sprache:
                 f.tags["WM/Language"] = [sprache]
+            if bpm:
+                f.tags["WM/BeatsPerMinute"] = [str(bpm)]
             art = "wma"
         elif hasattr(f, "tags") and f.tags is not None and hasattr(f.tags, "getall"):  # ID3 (MP3, WAV, AIFF)
-            art = _id3(f.tags, an, sprache)
+            art = _id3(f.tags, an, sprache, bpm)
         elif hasattr(f, "tags") and f.tags is None and _ist_id3_format(f):
             f.add_tags()
-            art = _id3(f.tags, an, sprache)
+            art = _id3(f.tags, an, sprache, bpm)
         else:  # Vorbis-Kommentare (FLAC, Ogg, Opus)
             if f.tags is None:
                 f.add_tags()
@@ -97,6 +105,8 @@ def schreiben(pfad, an=None, sprache=None):
                     del f.tags["RATING"]
             if sprache:
                 f.tags["LANGUAGE"] = sprache
+            if bpm:
+                f.tags["BPM"] = str(bpm)
             art = "vorbis"
         f.save()
         return art
@@ -118,8 +128,8 @@ def _ist_id3_format(f):
     return isinstance(f, (MP3, WAVE, AIFF))
 
 
-def _id3(tags, an, sprache=None):
-    from mutagen.id3 import POPM, TIT1, TLAN
+def _id3(tags, an, sprache=None, bpm=None):
+    from mutagen.id3 import POPM, TBPM, TIT1, TLAN
     if an is not None:
         alt = str(tags["TIT1"]) if "TIT1" in tags else ""
         neu = _gruppierung(alt, an)
@@ -132,6 +142,9 @@ def _id3(tags, an, sprache=None):
     if sprache:
         tags.delall("TLAN")
         tags.add(TLAN(encoding=3, text=[sprache]))
+    if bpm:
+        tags.delall("TBPM")
+        tags.add(TBPM(encoding=3, text=[str(bpm)]))
     return "id3"
 
 
@@ -158,28 +171,31 @@ def sprache_iso(code, p):
 
 
 def ausstehend(con):
-    """[(id, pfad, stern oder None, sprache oder None)]: was sich gegenüber der Datei geändert hat."""
+    """[(id, pfad, stern oder None, sprache oder None, bpm oder None)]: was sich gegenüber der Datei geändert hat."""
     erg = []
-    for r in con.execute("SELECT id, pfad, stern, stern_in_datei, sprache, sprache_p, sprache_in_datei FROM lieder "
+    for r in con.execute("SELECT id, pfad, stern, stern_in_datei, sprache, sprache_p, sprache_in_datei, "
+                         "bpm, tempo_stand, bpm_in_datei FROM lieder "
                          "WHERE status='analysiert' AND (stern != coalesce(stern_in_datei, 0) "
-                         "OR sprache_p >= ?)",
-                         (config.SPRACHE_DATEI_P,)):
+                         "OR sprache_p >= ? OR (tempo_stand=? AND bpm > 0))",
+                         (config.SPRACHE_DATEI_P, config.TEMPO_STAND)):
         stern = r["stern"] if r["stern"] != (r["stern_in_datei"] or 0) else None
         iso = sprache_iso(r["sprache"], r["sprache_p"])
         iso = iso if iso and iso != r["sprache_in_datei"] else None
-        if stern is not None or iso:
-            erg.append((r["id"], r["pfad"], stern, iso))
+        bpm = round(r["bpm"]) if r["tempo_stand"] == config.TEMPO_STAND and r["bpm"] else None
+        bpm = bpm if bpm and bpm != r["bpm_in_datei"] else None
+        if stern is not None or iso or bpm:
+            erg.append((r["id"], r["pfad"], stern, iso, bpm))
     return erg
 
 
 def alle_schreiben(con=None, ausgabe=print):
-    """Alle ausstehenden Sterne und Sprachen in die Dateien. Bricht bei schreibgeschützter Freigabe sofort ab."""
+    """Alle ausstehenden Sterne, Sprachen und BPM in die Dateien. Bricht bei schreibgeschützter Freigabe sofort ab."""
     con = con or db.verbinden()
     n = fehler = 0
-    for lid, rel, stern, iso in ausstehend(con):
+    for lid, rel, stern, iso, bpm in ausstehend(con):
         pfad = config.medienpfad(rel)
         try:
-            schreiben(pfad, None if stern is None else bool(stern), iso)
+            schreiben(pfad, None if stern is None else bool(stern), iso, bpm)
         except NurLesend:
             ausgabe(f"Freigabe ist nur lesend eingebunden: nichts geschrieben ({n} vorher geschrieben)")
             return n
@@ -193,6 +209,8 @@ def alle_schreiben(con=None, ausgabe=print):
                 con.execute("UPDATE lieder SET stern_in_datei=? WHERE id=?", (stern, lid))
             if iso:
                 con.execute("UPDATE lieder SET sprache_in_datei=? WHERE id=?", (iso, lid))
+            if bpm:
+                con.execute("UPDATE lieder SET bpm_in_datei=? WHERE id=?", (bpm, lid))
             con.execute("UPDATE lieder SET groesse=?, mtime=?, sha256=NULL, sha_stand=NULL WHERE id=?",
                         (st.st_size, st.st_mtime, lid))
         n += 1
@@ -203,7 +221,7 @@ def alle_schreiben(con=None, ausgabe=print):
 if __name__ == "__main__":
     if sys.argv[1:] == ["--zaehlen"]:
         a = ausstehend(db.verbinden())
-        print(sum(x[2] is not None for x in a), "Sterne und", sum(bool(x[3]) for x in a),
-              "Sprachen warten darauf, in die Datei geschrieben zu werden")
+        print(sum(x[2] is not None for x in a), "Sterne,", sum(bool(x[3]) for x in a), "Sprachen und",
+              sum(bool(x[4]) for x in a), "BPM warten darauf, in die Datei geschrieben zu werden")
     else:
         alle_schreiben()

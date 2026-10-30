@@ -118,3 +118,29 @@ def test_sprache_nur_bei_sicherer_erkennung_ausstehend(tmp_path, monkeypatch):
     assert tags.alle_schreiben(con, ausgabe=lambda *_: None) == 1
     assert tags.ausstehend(con) == []
     assert str(mutagen.File(tmp_path / "a.mp3").tags["TLAN"]) == "deu"
+
+
+@pytest.mark.parametrize("endung", [".mp3", ".flac", ".m4a", ".ogg"])
+def test_bpm_ueberschreibt_vorhandenen_tag(tmp_path, endung):
+    pfad = _datei(tmp_path / "lied", endung)
+    tags.schreiben(pfad, True, bpm=70)
+    tags.schreiben(pfad, bpm=140)
+    t = mutagen.File(pfad).tags
+    wert = {".mp3": lambda: str(t["TBPM"]), ".flac": lambda: t["BPM"][0], ".ogg": lambda: t["BPM"][0],
+            ".m4a": lambda: str(t["tmpo"][0])}[endung]()
+    assert wert == "140"
+    assert tags.lesen(pfad)   # Stern blieb
+
+
+def test_bpm_nur_vom_aktuellen_tempo_modell(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "MEDIA_ROOT", tmp_path)
+    con = db.verbinden(tmp_path / "t.db")
+    _datei(tmp_path / "a", ".mp3"), _datei(tmp_path / "b", ".mp3")
+    con.execute("INSERT INTO lieder(pfad, status, bpm, tempo_stand) VALUES ('a.mp3', 'analysiert', 127.6, ?)",
+                (config.TEMPO_STAND,))
+    con.execute("INSERT INTO lieder(pfad, status, bpm) VALUES ('b.mp3', 'analysiert', 93.0)")  # alter Schätzer
+    con.commit()
+    assert [(x[1], x[4]) for x in tags.ausstehend(con)] == [("a.mp3", 128)]
+    assert tags.alle_schreiben(con, ausgabe=lambda *_: None) == 1
+    assert tags.ausstehend(con) == []
+    assert str(mutagen.File(tmp_path / "a.mp3").tags["TBPM"]) == "128"

@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS lieder (
     kanaele INTEGER, dauer REAL, verlustfrei INTEGER,
     interpret TEXT, titel TEXT, album TEXT, tag_genre TEXT,
     bpm REAL,
-    tempo_stand TEXT,
+    tempo_stand TEXT, bpm_in_datei INTEGER,
     snippet_start REAL, snippet_quelle TEXT,  -- energie | 1:45 | anteil
     emb BLOB,                                  -- float16[1280], Hauptteil
     discogs TEXT,                              -- JSON Top-5 Discogs-Stile
@@ -177,7 +177,7 @@ def _nachruesten(con):
                         ("grenzfrequenz", "REAL"), ("kante", "REAL"), ("stern", "INTEGER NOT NULL DEFAULT 0"),
                         ("stern_ts", "REAL"), ("stern_in_datei", "INTEGER"),
                         ("sprache", "TEXT"), ("sprache_p", "REAL"), ("sprache_probs", "TEXT"), ("sprache_ts", "REAL"),
-                        ("sprache_in_datei", "TEXT"), ("wellenform", "BLOB"), ("tempo_stand", "TEXT")):
+                        ("sprache_in_datei", "TEXT"), ("wellenform", "BLOB"), ("tempo_stand", "TEXT"), ("bpm_in_datei", "INTEGER")):
         if spalte not in spalten:
             con.execute(f"ALTER TABLE lieder ADD COLUMN {spalte} {typ}")
     spalten = {r[1] for r in con.execute("PRAGMA table_info(modell_stand)")}
