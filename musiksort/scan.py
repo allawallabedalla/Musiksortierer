@@ -488,29 +488,31 @@ def tempo_nachmessen(anzahl=None, jobs=2, ausgabe=print):
         return 0
     if not nas_da():
         raise SystemExit(f"{config.MEDIA_ROOT} ist nicht eingebunden")
-    auftraege = []
-    for r in zeilen:
-        try:
-            auftraege.append((r["id"], str(config.medienpfad(r["pfad"])), r["dauer"]))
-        except ValueError:
-            continue
-    ausgabe(f"messe Tempo von {len(auftraege)} Liedern mit {jobs} Prozessen")
+    ausgabe(f"messe Tempo von {len(zeilen)} Liedern mit {jobs} Prozessen")
     t0, fertig, fehler = time.time(), 0, 0
     kontext = multiprocessing.get_context("forkserver")
     with ProcessPoolExecutor(jobs, mp_context=kontext, initializer=_tempo_laden, max_tasks_per_child=500) as pool:
-        for lied_id, bpm, f in pool.map(_nachmessen, auftraege, chunksize=4):
-            if f:
-                fehler += 1
-                if fehler % 50 == 1 and not nas_da():
-                    raise SystemExit("NAS weg: Abbruch, Rest beim nächsten Lauf")
-                continue
-            with con:
-                con.execute("UPDATE lieder SET bpm=?, tempo_stand=? WHERE id=?", (bpm, config.TEMPO_STAND, lied_id))
-            fertig += 1
-            if fertig % 200 == 0:
-                rate = fertig / (time.time() - t0)
-                ausgabe(f"{fertig}/{len(auftraege)}  {rate * 3600:.0f}/h  Fehler {fehler}  "
-                        f"Rest ~{(len(auftraege) - fertig) / rate / 3600:.1f} h")
+        # in Blöcken: Pfade erst kurz vorher auflösen (jedes resolve() fragt das NAS)
+        for i in range(0, len(zeilen), 200):
+            auftraege = []
+            for r in zeilen[i:i + 200]:
+                try:
+                    auftraege.append((r["id"], str(config.medienpfad(r["pfad"])), r["dauer"]))
+                except ValueError:
+                    continue
+            for lied_id, bpm, f in pool.map(_nachmessen, auftraege, chunksize=4):
+                if f:
+                    fehler += 1
+                    if fehler % 50 == 1 and not nas_da():
+                        raise SystemExit("NAS weg: Abbruch, Rest beim nächsten Lauf")
+                    continue
+                with con:
+                    con.execute("UPDATE lieder SET bpm=?, tempo_stand=? WHERE id=?",
+                                (bpm, config.TEMPO_STAND, lied_id))
+                fertig += 1
+            rate = fertig / (time.time() - t0)
+            ausgabe(f"{fertig}/{len(zeilen)}  {rate * 3600:.0f}/h  Fehler {fehler}  "
+                    f"Rest ~{(len(zeilen) - fertig - fehler) / max(rate, 1e-9) / 3600:.1f} h")
     ausgabe(f"fertig: {fertig}, Fehler {fehler}")
     return fertig
 
