@@ -287,6 +287,24 @@ def api_naechste(anzahl: int = Query(3, ge=1, le=10), ohne: str = Query("", max_
     return erg
 
 
+class Fokus(BaseModel):
+    genre_id: Optional[int] = None
+
+
+@app.get("/api/fokus")
+def api_fokus():
+    return {"genre_id": lernen.fokus_lesen(con())}
+
+
+@app.post("/api/fokus")
+def api_fokus_setzen(f: Fokus):
+    c = con()
+    if f.genre_id is not None and not c.execute("SELECT 1 FROM genres WHERE id=?", (f.genre_id,)).fetchone():
+        raise HTTPException(404, "Genre gibt es nicht")
+    lernen.fokus_setzen(c, f.genre_id)
+    return {"genre_id": lernen.fokus_lesen(c)}
+
+
 class Bewertung(BaseModel):
     lied_id: int
     haupt: int

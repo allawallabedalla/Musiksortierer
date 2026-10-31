@@ -496,3 +496,12 @@ def test_zusammenlege_hinweis_nur_bei_starker_verwechslung(umgebung):
     con.execute("INSERT INTO verwechslungen VALUES (?,?,0.3,40)", (gid, g3))   # auch Hinweis
     con.commit()
     assert [(x["a"], x["b"]) for x in client.get("/api/verwechslungen").json()] == [(gid, g3)]
+
+
+def test_fokus_setzen_und_lesen(umgebung):
+    client, con, lid, gid = umgebung
+    assert client.get("/api/fokus").json() == {"genre_id": None}
+    assert client.post("/api/fokus", json={"genre_id": 9999}).status_code == 404
+    assert client.post("/api/fokus", json={"genre_id": gid}).json() == {"genre_id": gid}
+    assert client.get("/api/fokus").json() == {"genre_id": gid}
+    assert client.post("/api/fokus", json={"genre_id": None}).json() == {"genre_id": None}
