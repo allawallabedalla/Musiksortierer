@@ -388,8 +388,10 @@ def trainieren(con=None, cv_erzwingen=False, trocken=False):
     et = [e for e in et if e["genre_id"] in genres]
     zeilen_et = [pos[e["lied_id"]] for e in et]
     E = X_alle[zeilen_et].astype(np.float32)          # nur Klang: für Zentren und Ausreißer-Grenze
-    # Zeitverlauf erst, wenn fast alle bewerteten Lieder ihn haben (sonst lernt das Modell aus Lücken)
-    mit_zeit = bool(len(zeilen_et)) and hat_z[zeilen_et].mean() >= config.ZEITVERLAUF_AB
+    # Zeitverlauf erst, wenn fast alle bewerteten Lieder UND fast der ganze Bestand ihn haben: sonst lernt das
+    # Modell aus Lücken bzw. sagt ungemessene Lieder (Nullblock) zu unsicher voraus (31.10.: 27.600 → 3.800 bestätigt)
+    mit_zeit = (bool(len(zeilen_et)) and hat_z[zeilen_et].mean() >= config.ZEITVERLAUF_AB
+                and hat_z.mean() >= config.ZEITVERLAUF_AB)
     merkmale = MERKMALE + ("+zeitverlauf" if mit_zeit else "")
     def zeit(sl):
         return Z_alle[sl] if mit_zeit else None
