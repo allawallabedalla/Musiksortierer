@@ -480,3 +480,27 @@ def test_backlog_fragt_gezielt_zwischen_verwechselten_genres(con, monkeypatch):
     paar = {gids[0], gids[1]}
     assert karten and all({*con.execute("SELECT genre_id, zweit_id FROM vorhersagen WHERE lied_id=?",
                                         (k["lied_id"],)).fetchone()} == paar for k in karten)
+
+
+def test_zeitverlauf_erst_wenn_fast_alle_bewerteten_ihn_haben(con):
+    wahr, gids = _wolken(con, n_pro=40)
+    bewertet = []
+    for w in range(3):
+        for lid in [l for l, x in wahr.items() if x == w][:10]:
+            _bewerte(con, lid, gids[w])
+            bewertet.append(lid)
+    con.commit()
+    lernen.trainieren(con)
+    assert "zeitverlauf" not in lernen._info(con, "merkmale")
+    rng = np.random.default_rng(3)
+    for lid in bewertet + list(wahr)[:5]:
+        v = (np.abs(rng.normal(size=1280)) * (1 + wahr[lid])).astype(np.float16)
+        con.execute("UPDATE lieder SET emb_std=? WHERE id=?", (v.tobytes(), lid))
+    con.commit()
+    lernen.trainieren(con)
+    assert lernen._info(con, "merkmale").endswith("+zeitverlauf")
+    b = lernen.bestand
+    assert b.hat_z.sum() == len(set(bewertet) | set(list(wahr)[:5]))
+    gemessen = b.Z[b.hat_z].astype(np.float32)
+    assert abs(gemessen.mean()) < 1e-2 and not b.Z[~b.hat_z].any()   # standardisiert, Lücken neutral 0
+    assert con.execute("SELECT COUNT(*) FROM vorhersagen").fetchone()[0] == len(wahr)

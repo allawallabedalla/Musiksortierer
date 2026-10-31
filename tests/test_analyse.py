@@ -62,6 +62,12 @@ def test_suchen_analysieren_fehlt(media):
     bpm, stand = con.execute("SELECT bpm, tempo_stand FROM lieder WHERE pfad='Musik/beat.mp3'").fetchone()
     assert 110 <= bpm <= 130 and stand == config.TEMPO_STAND
     assert scan.tempo_nachmessen(jobs=1, ausgabe=lambda *_: None) == 0
+    # Zeitverlauf: bei der Analyse mitgemessen, alter Bestand wird nachgemessen
+    assert con.execute("SELECT length(emb_std) FROM lieder WHERE pfad='Musik/beat.mp3'").fetchone()[0] == 1280 * 2
+    con.execute("UPDATE lieder SET emb_std=NULL WHERE pfad='Musik/beat.mp3'")
+    con.commit()
+    assert scan.zeitverlauf_nachmessen(jobs=1, ausgabe=lambda *_: None) == 1
+    assert con.execute("SELECT length(emb_std) FROM lieder WHERE pfad='Musik/beat.mp3'").fetchone()[0] == 1280 * 2
 
     (media / "Musik" / "beat.flac").unlink()
     scan.suchen()

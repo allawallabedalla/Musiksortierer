@@ -359,12 +359,13 @@ def _analysiere(zeile):
         bpm = _tempo(bpm_teil)
         kern = _modell["effnet"](proben)  # (Zeitfenster, 1280)
         mittel = kern.mean(0)
+        streuung = kern.std(0)
         p = _modell["kopf"](kern).mean(0)
         top = [(_modell["klassen"][i], round(float(p[i]), 3)) for i in p.argsort()[::-1][:5]]
         info.update(
             status="analysiert", fehler=None, bpm=bpm, tempo_stand=config.TEMPO_STAND,
             snippet_start=start, snippet_quelle=quelle,
-            emb=mittel.astype(np.float16).tobytes(), discogs=json.dumps(top, ensure_ascii=False),
+            emb=mittel.astype(np.float16).tobytes(), emb_std=streuung.astype(np.float16).tobytes(), discogs=json.dumps(top, ensure_ascii=False),
             fp=fp.tobytes(), analysiert=time.time(), analyse_s=round(time.time() - t0, 2),
         )
     except (Voruebergehend, OSError, subprocess.TimeoutExpired) as e:
@@ -474,6 +475,58 @@ def _nachmessen(zeile):
         return lied_id, None, f"{type(e).__name__}: {e}"[:200]
 
 
+def _zeitverlauf(zeile):
+    lied_id, pfad, dauer = zeile
+    try:
+        a = _dekodieren(pfad, dauer)
+        return lied_id, _modell["effnet"](hauptteil_proben(a)[0]).std(0).astype(np.float16).tobytes(), None
+    except Exception as e:
+        return lied_id, None, f"{type(e).__name__}: {e}"[:200]
+
+
+def zeitverlauf_nachmessen(anzahl=None, jobs=2, ausgabe=print):
+    """Zeitverlauf (emb_std) für Lieder, die vor seiner Einführung analysiert wurden. Bewertete Lieder
+    zuerst: das Modell nutzt ihn erst, wenn fast alle bewerteten ihn haben. Abbrechbar wie die Tempo-Nachmessung."""
+    con = db.verbinden()
+    bewertet = {r[0] for r in con.execute("SELECT DISTINCT lied_id FROM etiketten")}
+    zeilen = con.execute("SELECT id, pfad, dauer FROM lieder WHERE status='analysiert' AND emb IS NOT NULL "
+                         "AND emb_std IS NULL ORDER BY id").fetchall()
+    zeilen.sort(key=lambda r: r["id"] not in bewertet)
+    if anzahl:
+        zeilen = zeilen[:anzahl]
+    if not zeilen:
+        ausgabe("nichts zu tun")
+        return 0
+    if not nas_da():
+        raise SystemExit(f"{config.MEDIA_ROOT} ist nicht eingebunden")
+    ausgabe(f"messe Zeitverlauf von {len(zeilen)} Liedern ({len(bewertet & {r['id'] for r in zeilen})} bewertet) "
+            f"mit {jobs} Prozessen")
+    t0, fertig, fehler = time.time(), 0, 0
+    kontext = multiprocessing.get_context("forkserver")
+    with ProcessPoolExecutor(jobs, mp_context=kontext, initializer=_init_worker, max_tasks_per_child=500) as pool:
+        for i in range(0, len(zeilen), 200):   # Pfade erst kurz vorher auflösen (resolve() fragt das NAS)
+            auftraege = []
+            for r in zeilen[i:i + 200]:
+                try:
+                    auftraege.append((r["id"], str(config.medienpfad(r["pfad"])), r["dauer"]))
+                except ValueError:
+                    continue
+            for lied_id, std, f in pool.map(_zeitverlauf, auftraege, chunksize=4):
+                if f:
+                    fehler += 1
+                    if fehler % 50 == 1 and not nas_da():
+                        raise SystemExit("NAS weg: Abbruch, Rest beim nächsten Lauf")
+                    continue
+                with con:
+                    con.execute("UPDATE lieder SET emb_std=? WHERE id=?", (std, lied_id))
+                fertig += 1
+            rate = fertig / (time.time() - t0)
+            ausgabe(f"{fertig}/{len(zeilen)}  {rate * 3600:.0f}/h  Fehler {fehler}  "
+                    f"Rest ~{(len(zeilen) - fertig - fehler) / max(rate, 1e-9) / 3600:.1f} h")
+    ausgabe(f"fertig: {fertig}, Fehler {fehler}")
+    return fertig
+
+
 def tempo_nachmessen(anzahl=None, jobs=2, ausgabe=print):
     """BPM aller analysierten Lieder mit dem aktuellen Tempo-Modell neu messen (nur bpm + tempo_stand).
     Gleiche Stelle wie bei der Analyse (Hauptteil). Abbrechbar: beim nächsten Lauf geht es weiter.
@@ -541,7 +594,7 @@ def videos_aussortieren(ausgabe=print):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("schritt", choices=["suchen", "analysieren", "videos", "stumm", "tempo"])
+    ap.add_argument("schritt", choices=["suchen", "analysieren", "videos", "stumm", "tempo", "zeitverlauf"])
     ap.add_argument("ids", nargs="*", type=int, help="bei „stumm“: diese Lied-IDs nachprüfen")
     ap.add_argument("-n", "--anzahl", type=int)
     ap.add_argument("--zufall", action="store_true")
@@ -555,6 +608,8 @@ def main():
         stumme_aussortieren(a.ids)
     elif a.schritt == "tempo":
         tempo_nachmessen(a.anzahl, a.jobs)
+    elif a.schritt == "zeitverlauf":
+        zeitverlauf_nachmessen(a.anzahl, a.jobs)
     elif analysieren(a.anzahl, a.zufall, a.jobs):
         # nur wenn etwas dazukam: Duplikate neu berechnen (sonst stündlich unnötig)
         from . import duplikate
