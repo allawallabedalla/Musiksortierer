@@ -46,6 +46,9 @@ class Bestand:
         self.X = np.zeros((0, 1280), dtype=np.float16)
         self.dauer = np.zeros(0, dtype=np.float32)  # Sekunden, für die Längen-Merkmale
         self.sprache = np.zeros((0, sprache.BREITE), dtype=np.float32)  # Gesangssprache (sprache.py)
+        self.Z = np.zeros((0, 1280), dtype=np.float16)  # Zeitverlauf, standardisiert (0 = nicht gemessen)
+        self.hat_z = np.zeros(0, dtype=bool)
+        self._zeitverlauf = -1
         self.pos = {}
         self._sprachen = -1
         self._stand = -1
@@ -57,19 +60,23 @@ class Bestand:
         Geladen wird ohne die Anfrage-Sperre; nur der Austausch ist kurz gesperrt.
         """
         with self._lade_sperre:
-            n, n_spr = con.execute("SELECT COUNT(*), COUNT(sprache_probs) FROM lieder "
-                                   "WHERE status='analysiert' AND emb IS NOT NULL").fetchone()
+            n, n_spr, n_z = con.execute("SELECT COUNT(*), COUNT(sprache_probs), COUNT(emb_std) FROM lieder "
+                                        "WHERE status='analysiert' AND emb IS NOT NULL").fetchone()
             fehlt = any(i not in self.pos for i in brauche)
             # neu gemessene Sprachen zählen wie neue Lieder (ändern die Merkmale)
             if not erzwingen and not fehlt and self._stand >= 0 and abs(n - self._stand) <= max(20, 0.02 * self._stand) \
-                    and abs(n_spr - self._sprachen) <= max(20, 0.02 * max(self._stand, 1)):
+                    and abs(n_spr - self._sprachen) <= max(20, 0.02 * max(self._stand, 1)) \
+                    and abs(n_z - self._zeitverlauf) <= max(20, 0.02 * max(self._stand, 1)):
                 return
             ids = np.zeros(n, dtype=np.int64)
             X = np.zeros((n, 1280), dtype=np.float16)
             dauer = np.zeros(n, dtype=np.float32)
             spr = np.zeros((n, sprache.BREITE), dtype=np.float32)
+            Z = np.zeros((n, 1280), dtype=np.float16)
+            hat_z = np.zeros(n, dtype=bool)
             k = 0
-            cur = con.execute("SELECT id, emb, dauer, sprache_probs FROM lieder WHERE status='analysiert' AND emb IS NOT NULL")
+            cur = con.execute("SELECT id, emb, dauer, sprache_probs, emb_std FROM lieder "
+                              "WHERE status='analysiert' AND emb IS NOT NULL")
             while k < n:
                 block = cur.fetchmany(5000)
                 if not block:
@@ -81,10 +88,16 @@ class Bestand:
                 X[k:k + m] = B[:m]
                 dauer[k:k + m] = [r[2] or 0 for r in block[:m]]
                 spr[k:k + m] = sprache.merkmale([r[3] for r in block[:m]])
+                for j, r in enumerate(block[:m]):
+                    if r[4] is not None:
+                        Z[k + j] = np.frombuffer(r[4], np.float16)
+                        hat_z[k + j] = True
                 k += m
-            ids, X, dauer, spr = ids[:k], X[:k], dauer[:k], spr[:k]
+            ids, X, dauer, spr, Z, hat_z = ids[:k], X[:k], dauer[:k], spr[:k], Z[:k], hat_z[:k]
+            _zeitverlauf_standardisieren(Z, hat_z)
             with _sperre:
                 self.ids, self.X, self.dauer, self.sprache, self._stand = ids, X, dauer, spr, k
+                self.Z, self.hat_z, self._zeitverlauf = Z, hat_z, int(hat_z.sum())
                 self._sprachen = int(spr[:, -1].sum() / max(config.SPRACHE_GEWICHT, 1e-9))
                 self.pos = {int(i): j for j, i in enumerate(ids)}
 
@@ -160,11 +173,33 @@ def laenge_merkmale(dauer):
             .astype(np.float32) * config.LAENGE_GEWICHT)
 
 
-def _merkmale(emb, dauer, spr=None):
-    """Was das Genre-Modell sieht: Klang-Steckbrief + Länge + Gesangssprache (Nullen = nicht gemessen)."""
+def _zeitverlauf_standardisieren(Z, hat):
+    """In place: je Spalte z-standardisiert über die gemessenen Lieder, Blocklänge ~1 wie der normierte
+    Steckbrief. Nicht gemessene Lieder bleiben 0 = Durchschnitt (neutral)."""
+    if not hat.any():
+        return
+    zeilen = np.flatnonzero(hat)
+    summe, quadrat = np.zeros(Z.shape[1]), np.zeros(Z.shape[1])
+    for s in range(0, len(zeilen), 20000):
+        t = Z[zeilen[s:s + 20000]].astype(np.float64)
+        summe += t.sum(0)
+        quadrat += (t ** 2).sum(0)
+    mittel = summe / len(zeilen)
+    sd = np.sqrt(np.maximum(quadrat / len(zeilen) - mittel ** 2, 0)) + 1e-6
+    for s in range(0, len(zeilen), 20000):
+        z = zeilen[s:s + 20000]
+        Z[z] = ((Z[z].astype(np.float32) - mittel) / sd / np.sqrt(Z.shape[1])).astype(np.float16)
+
+
+def _merkmale(emb, dauer, spr=None, zeit=None):
+    """Was das Genre-Modell sieht: Klang-Steckbrief + Länge + Gesangssprache (Nullen = nicht gemessen),
+    mit zeit (standardisierter Zeitverlauf) zusätzlich dieser Block."""
     if spr is None:
         spr = np.zeros((len(emb), sprache.BREITE), dtype=np.float32)
-    return np.hstack([emb.astype(np.float32), laenge_merkmale(dauer), spr])
+    teile = [emb.astype(np.float32), laenge_merkmale(dauer), spr]
+    if zeit is not None:
+        teile.append(zeit.astype(np.float32) * config.ZEITVERLAUF_GEWICHT)
+    return np.hstack(teile)
 
 
 def _etiketten(con):
@@ -323,6 +358,7 @@ def trainieren(con=None, cv_erzwingen=False, trocken=False):
     bestand.aktualisieren(con, brauche=[e["lied_id"] for e in alle_et])
     with _sperre:  # werden bei Updates ersetzt, nie verändert
         ids, X_alle, dauer_alle, spr_alle, pos = bestand.ids, bestand.X, bestand.dauer, bestand.sprache, bestand.pos
+        Z_alle, hat_z = bestand.Z, bestand.hat_z
     et = [e for e in alle_et if e["lied_id"] in pos]
     zaehl = {}
     for e in et:
@@ -352,7 +388,12 @@ def trainieren(con=None, cv_erzwingen=False, trocken=False):
     et = [e for e in et if e["genre_id"] in genres]
     zeilen_et = [pos[e["lied_id"]] for e in et]
     E = X_alle[zeilen_et].astype(np.float32)          # nur Klang: für Zentren und Ausreißer-Grenze
-    X = _merkmale(E, dauer_alle[zeilen_et], spr_alle[zeilen_et])  # Klang + Länge + Sprache: fürs Genre-Modell
+    # Zeitverlauf erst, wenn fast alle bewerteten Lieder ihn haben (sonst lernt das Modell aus Lücken)
+    mit_zeit = bool(len(zeilen_et)) and hat_z[zeilen_et].mean() >= config.ZEITVERLAUF_AB
+    merkmale = MERKMALE + ("+zeitverlauf" if mit_zeit else "")
+    def zeit(sl):
+        return Z_alle[sl] if mit_zeit else None
+    X = _merkmale(E, dauer_alle[zeilen_et], spr_alle[zeilen_et], zeit(zeilen_et))  # fürs Genre-Modell
     y = np.array([e["genre_id"] for e in et])
 
     # Kreuzvalidierung nur, wenn sich genug geändert hat
@@ -360,7 +401,7 @@ def trainieren(con=None, cv_erzwingen=False, trocken=False):
     spr_bewertet = int(spr_alle[zeilen_et, -1].astype(bool).sum())
     letzte_n, letzte_reif = _info(con, "cv_bewertungen"), _info(con, "cv_reif")
     cv_faellig = (cv_erzwingen or letzte_n is None or len(et) - int(letzte_n) >= config.CV_ALLE
-                  or letzte_reif != json.dumps(reif) or _info(con, "merkmale") != MERKMALE
+                  or letzte_reif != json.dumps(reif) or _info(con, "merkmale") != merkmale
                   # bewertete Lieder mit neu gemessener Sprache: Schwellen neu schätzen
                   or abs(spr_bewertet - int(_info(con, "cv_sprache") or 0)) >= config.CV_ALLE)
     schwellen, quoten, n_sicher, roh, mindest = {}, {}, {}, {}, {}
@@ -425,7 +466,9 @@ def trainieren(con=None, cv_erzwingen=False, trocken=False):
     if start is not None:
         nimm = np.isin(start[3], genres)
         E_fit = np.vstack([E, start[0][nimm]])
-        X_fit = np.vstack([X, _merkmale(start[0][nimm], start[1][nimm], start[2][nimm])])
+        # Startbeispiele haben keinen Zeitverlauf: 0 = Durchschnitt
+        X_fit = np.vstack([X, _merkmale(start[0][nimm], start[1][nimm], start[2][nimm],
+                                        np.zeros((int(nimm.sum()), 1280), np.float32) if mit_zeit else None)])
         y_fit = np.concatenate([y, start[3][nimm]])
         gewicht = np.concatenate([gewicht, np.full(int(nimm.sum()), config.START_GEWICHT)])
     modell = LogisticRegression(C=config.MODELL_C, max_iter=2000, class_weight="balanced").fit(X_fit, y_fit, sample_weight=gewicht)
@@ -453,7 +496,8 @@ def trainieren(con=None, cv_erzwingen=False, trocken=False):
     zeilen = []
     for start in range(0, len(ids), 20000):
         teil_x = X_alle[start:start + 20000].astype(np.float32)
-        P = modell.predict_proba(_merkmale(teil_x, dauer_alle[start:start + 20000], spr_alle[start:start + 20000]))
+        P = modell.predict_proba(_merkmale(teil_x, dauer_alle[start:start + 20000], spr_alle[start:start + 20000],
+                                           zeit(slice(start, start + 20000))))
         naehe = teil_x @ zentren.T
         p_ober = {a: P[:, sp].sum(1) for a, sp in ober_spalten.items()}
         n_ober = {a: teil_x @ z for a, z in ober_zentrum.items()}
@@ -516,7 +560,7 @@ def trainieren(con=None, cv_erzwingen=False, trocken=False):
         if cv_faellig:
             _info(con, "cv_bewertungen", len(et))
             _info(con, "cv_reif", json.dumps(reif))
-            _info(con, "merkmale", MERKMALE)
+            _info(con, "merkmale", merkmale)
             _info(con, "cv_sprache", spr_bewertet)
         con.commit()
     return True

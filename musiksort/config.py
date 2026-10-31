@@ -78,6 +78,10 @@ STICHPROBE_VORRANG_LIEDER = 1000  # Genre so groß und …
 STICHPROBE_VORRANG_FEHLT = 10     # … höchstens so viele richtige Antworten vom Beleg: nur noch Stichproben
 AUSREISSER_QUANTIL = 0.10  # weiter weg vom Genre-Zentrum als 90 % der eigenen Beispiele: nicht automatisch
 LAENGE_GEWICHT = 1.0       # Gewicht der Längen-Merkmale neben dem Klang (Mixtapes erkennen)
+# Zeitverlauf: Streuung des Klang-Steckbriefs über die gehörten Fenster (Groove/Aufbau statt nur Mittel).
+# Offline 31.10.2026 (Electronic, 616 Bewertungen, 27 Stile): +1,9 Punkte Treffer (σ_Δ 2,8, 10/15 Teile besser).
+ZEITVERLAUF_GEWICHT = 1.0
+ZEITVERLAUF_AB = 0.95      # erst nutzen, wenn so viele der bewerteten Lieder ihn haben (Nachmessung läuft)
 START_GEWICHT = 0.5        # Gewicht eines Startmodell-Beispiels gegenüber einer eigenen Bewertung
 SPRACHE_GEWICHT = 1.0      # Gewicht der Gesangssprache (Deutschrap vs. US-Rap klingt gleich, Sprache trennt)
 SPRACHE_ZUERST = ("Hip Hop",)  # Lieder, die das Modell hier sieht, bekommen ihre Sprache zuerst gemessen
