@@ -29,8 +29,9 @@ MAX_KOERPER = 64 * 1024
 ANALYSE_CGROUP = Path(f"/sys/fs/cgroup/user.slice/user-{os.getuid()}.slice/user@{os.getuid()}.service/"
                       "app.slice/musiksort-analyse.service")
 # Direkt abspielbar (ganze Datei mit Scrub-Leiste); alles andere bekommt den erzeugten Ausschnitt
+# scan.py speichert PCM als „wav“ bzw. „aiff“ (nicht pcm_s16le …): sonst landeten WAV/AIFF beim Ausschnitt
 DIREKT = {"mp3": "audio/mpeg", "aac": "audio/mp4", "alac": "audio/mp4", "flac": "audio/flac",
-          "pcm_s16le": "audio/wav", "pcm_s24le": "audio/wav", "pcm_s32le": "audio/wav", "pcm_f32le": "audio/wav"}
+          "wav": "audio/wav", "aiff": "audio/aiff"}
 
 app = FastAPI(title="Musiksortierer", docs_url=None, redoc_url=None, openapi_url=None)
 _verbindungen = contextvars.ContextVar("verbindungen", default=None)

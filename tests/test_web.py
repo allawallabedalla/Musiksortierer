@@ -505,3 +505,14 @@ def test_fokus_setzen_und_lesen(umgebung):
     assert client.post("/api/fokus", json={"genre_id": gid}).json() == {"genre_id": gid}
     assert client.get("/api/fokus").json() == {"genre_id": gid}
     assert client.post("/api/fokus", json={"genre_id": None}).json() == {"genre_id": None}
+
+
+@pytest.mark.parametrize("endung", [".wav", ".aiff", ".flac", ".m4a"])
+def test_verlustfreie_formate_direkt_abspielbar(tmp_path, endung):
+    """Der Codec-Name, den scan.py speichert, muss in DIREKT stehen (WAV/AIFF fielen sonst auf den Ausschnitt)."""
+    from musiksort import scan
+    datei = tmp_path / f"ton{endung}"
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "sine=f=440:d=2",
+                    *(["-c:a", "alac"] if endung == ".m4a" else []), str(datei)], check=True)
+    info = scan._ffprobe(str(datei))
+    assert info["verlustfrei"] and info["codec"] in web.DIREKT
