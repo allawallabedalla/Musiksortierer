@@ -65,6 +65,9 @@ nav i{font-size:20px}
 .vorschlag{flex:1;min-width:0;text-align:left;border:2px solid var(--gut);color:var(--text);background:none;border-radius:12px;padding:12px;font-size:16px}
 .vorschlag.an{background:var(--gut);color:var(--gut-text)}
 .vorschlag.an .unter{color:inherit}
+.fokus{display:flex;align-items:center;gap:8px;padding:10px 16px;font-size:15px}
+.fokus i{color:var(--koralle)}
+.fokus select{flex:1;min-height:44px;padding:8px 10px;border-radius:12px;border:1px solid var(--linie);background:var(--karte);color:var(--text);font-size:16px}
 .suche{width:100%;min-height:44px;padding:10px 12px;border-radius:12px;border:1px solid var(--linie);background:var(--karte);color:var(--text);font-size:16px;margin-bottom:10px}
 .chips{display:flex;flex-wrap:wrap;gap:8px}
 .chip{border:2px solid var(--linie);background:var(--chip);color:var(--text);border-radius:999px;padding:8px 14px;font-size:15px;min-height:44px}
@@ -167,6 +170,8 @@ button:disabled{opacity:.5}
 </div>
 
 <main id="bewerten">
+  <label class="karte fokus"><i class="fa-regular fa-compass"></i>Fokus
+    <select id="fokus" aria-label="Nur Lieder aus diesem Bereich bewerten"><option value="">Alle Genres</option></select></label>
   <section id="fortschritt" class="karte fortschritt" aria-label="Fortschritt des Projekts"></section>
   <div id="lied" class="karte"><div class="leer">Lade …</div></div>
   <div class="karte">
@@ -275,6 +280,7 @@ async function genresLaden() {
   const neu = await api("/api/genres");
   if (nr !== genresNr) return;
   genres = neu;
+  fokusZeichnen();
   // Wahl auf gelöschte/zusammengeführte Genres verwerfen
   const da = new Set(genres.map(g => g.id));
   if (haupt !== null && !da.has(haupt)) haupt = null;
@@ -1194,7 +1200,25 @@ async function fortschrittZeigen() {
 let gespeichertSeitFortschritt = 0;
 setInterval(() => { if (!document.hidden && seite === "bewerten") fortschrittZeigen().catch(() => {}); }, 5 * 60000);
 
+// Fokus: nur Lieder aus einem Bereich (Genre mit Unter-Genres), z. B. Electronic
+let fokus = null;
+function fokusZeichnen() {
+  const eltern = new Set(genres.map(g => g.eltern_id).filter(e => e !== null));
+  const wahl = genres.filter(g => eltern.has(g.id) || g.id === fokus);
+  $("#fokus").innerHTML = `<option value="">Alle Genres</option>` +
+    wahl.map(g => `<option value="${g.id}"${g.id === fokus ? " selected" : ""}>${esc(g.pfad)}</option>`).join("");
+}
+$("#fokus").onchange = async ev => {
+  const id = ev.target.value ? Number(ev.target.value) : null;
+  try { fokus = (await post("/api/fokus", {genre_id: id})).genre_id; }
+  catch (e) { melde(e.message); }
+  fokusZeichnen();
+  schlange = [];  // vorgeladene Lieder stammen noch aus dem alten Fokus
+  einmal("weiter", weiter);
+};
+
 async function start() {
+  fokus = (await api("/api/fokus").catch(() => ({genre_id: null}))).genre_id;
   fortschrittZeigen().catch(() => {});  // stört das Bewerten nie, auch wenn es scheitert
   try { await genresLaden(); await weiter(); }
   catch (e) {

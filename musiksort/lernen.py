@@ -601,7 +601,15 @@ def naechste(con, anzahl=3, ausschliessen=()):
 
     Von Duplikaten kommt nur die beste Fassung (die behaltene Datei der Gruppe), und keine Kopie eines
     Liedes, das schon bewertet ist oder gerade in der Schlange liegt (ausschliessen).
+
+    Fokus (modell_info „fokus“ = Genre-ID): nur Lieder, die das Modell in diesem Genre oder seinen
+    Unter-Genres sieht; keine Klanggruppen, mehr Verwechsler, „mehr Beispiele“ auch für kleine Stile.
     """
+    fokus = fokus_lesen(con)
+    im_fokus = _baum(con)[0][fokus] if fokus is not None else None
+    def drin(*gs):
+        return im_fokus is None or all(g in im_fokus for g in gs)
+    nur_fokus = f" AND v.genre_id IN ({','.join(map(str, im_fokus))})" if im_fokus is not None else ""
     bewertet = {r[0] for r in con.execute("SELECT DISTINCT lied_id FROM etiketten")}
     # „Später“ heißt später: nach ein paar Tagen darf ein übersprungenes Lied wiederkommen
     uebersprungen = {r[0] for r in con.execute("SELECT lied_id FROM uebersprungen WHERE ts > ?",
@@ -615,7 +623,7 @@ def naechste(con, anzahl=3, ausschliessen=()):
                                "GROUP BY k.gruppe").fetchall())
     benannt = {r[0] for r in con.execute(
         "SELECT DISTINCT k.gruppe FROM klanggruppen k JOIN etiketten e ON e.lied_id=k.lied_id")}
-    offen_gruppen = sorted((g for g in groesse if g not in benannt), key=lambda g: -groesse[g])
+    offen_gruppen = sorted((g for g in groesse if g not in benannt), key=lambda g: -groesse[g]) if fokus is None else []
     gruppe_von = {}
     pruef_von = {}   # Stichprobe: welches Genre (fein oder Obergenre) geprüft wird
     hat_modell = con.execute("SELECT 1 FROM vorhersagen LIMIT 1").fetchone() is not None
@@ -625,15 +633,18 @@ def naechste(con, anzahl=3, ausschliessen=()):
     wartend = dict(con.execute("SELECT g, COUNT(*) FROM (SELECT genre_id g FROM vorhersagen WHERE auto=1 "
                                "UNION ALL SELECT ober_id FROM vorhersagen WHERE ober_id IS NOT NULL "
                                "UNION ALL SELECT pruef_id FROM vorhersagen WHERE pruef_id IS NOT NULL) GROUP BY g"))
-    auto_genres = stichproben_gewichte(wartend, stich)
+    auto_genres = [(g, w) for g, w in stichproben_gewichte(wartend, stich) if drin(g)]
     # Vorrang: ein großes Genre ist nur noch wenige richtige Antworten vom Beleg entfernt → nur Stichproben
     # für diese Genres, bis sie belegt sind (oder eine falsche Antwort den Bedarf über die Grenze treibt)
     vorrang = [(g, w) for g, w in auto_genres if wartend[g] >= config.STICHPROBE_VORRANG_LIEDER
                and 0 < (stichproben_fehlen(*stich.get(g, (0, 0))) or 0) <= config.STICHPROBE_VORRANG_FEHLT]
     n_bew = dict(con.execute("SELECT genre_id, COUNT(*) FROM etiketten WHERE haupt=1 GROUP BY genre_id").fetchall())
     haeufig = [(g, n) for g, n in con.execute("SELECT genre_id, COUNT(*) FROM vorhersagen GROUP BY genre_id")
-               if n >= 50 and n_bew.get(g, 0) < config.MIN_BEWERTUNGEN_AUTO]
-    paare = [((a, b), anteil * n) for a, b, anteil, n in con.execute("SELECT a, b, anteil, n FROM verwechslungen")]
+               if n >= (50 if fokus is None else config.FOKUS_AUFFUELLEN_AB)
+               and n_bew.get(g, 0) < config.MIN_BEWERTUNGEN_AUTO and drin(g)]
+    paare = [((a, b), anteil * n) for a, b, anteil, n in con.execute("SELECT a, b, anteil, n FROM verwechslungen")
+             if drin(a, b)]
+    verwechsler_anteil = config.VERWECHSLER_ANTEIL if fokus is None else config.FOKUS_VERWECHSLER
     zufall = random.Random(time.time())
 
     def frei(sql, *werte):
@@ -668,22 +679,26 @@ def naechste(con, anzahl=3, ausschliessen=()):
                             "ORDER BY k.abstand LIMIT 90", g)
                 gruppe_von[wahl] = groesse[g]
             grund = "gruppe"
-        if wahl is None and paare and zufall.random() < config.VERWECHSLER_ANTEIL:
+        if wahl is None and paare and zufall.random() < verwechsler_anteil:
             a, b = gewichtet(paare)
             wahl = frei(f"SELECT v.lied_id FROM vorhersagen v {analysiert.format('v')} WHERE v.auto=0 "
                         "AND ((v.genre_id=? AND v.zweit_id=?) OR (v.genre_id=? AND v.zweit_id=?)) "
                         "ORDER BY v.p - coalesce(v.p2, 0) LIMIT 300", a, b, b, a)
             grund = "verwechsler"
-        if wahl is None and haeufig and wurf < 0.75:
+        if wahl is None and haeufig and wurf < (0.75 if fokus is None else 0.9):
             g = gewichtet(haeufig)
             wahl = frei(f"SELECT v.lied_id FROM vorhersagen v {analysiert.format('v')} WHERE v.genre_id=? AND v.auto=0 "
                         "ORDER BY random() LIMIT 150", g)
             grund = "auffuellen"
         if wahl is None and hat_modell:
-            wahl = frei(f"SELECT v.lied_id FROM vorhersagen v {analysiert.format('v')} WHERE v.auto=0 "
+            wahl = frei(f"SELECT v.lied_id FROM vorhersagen v {analysiert.format('v')} WHERE v.auto=0{nur_fokus} "
                         "ORDER BY v.p - coalesce(v.p2, 0) LIMIT 1500")
             grund = "unsicher"
-        if wahl is None:
+        if wahl is None and fokus is not None:
+            wahl = frei(f"SELECT v.lied_id FROM vorhersagen v {analysiert.format('v')} WHERE 1{nur_fokus} "
+                        "ORDER BY random() LIMIT 600")
+            grund = "zufall"
+        if wahl is None and fokus is None:
             wahl = frei("SELECT id FROM lieder WHERE status='analysiert' AND emb IS NOT NULL ORDER BY random() LIMIT 600")
             grund = "zufall"
         if wahl is None:
@@ -694,6 +709,22 @@ def naechste(con, anzahl=3, ausschliessen=()):
         ergebnis.append({"lied_id": wahl, "grund": grund, "gruppe": gruppe_von.get(wahl, 0),
                          **({"pruef_id": pruef_von[wahl]} if grund == "stichprobe" and wahl in pruef_von else {})})
     return ergebnis
+
+
+def fokus_lesen(con):
+    """Genre-ID des Bewertungs-Fokus oder None (alle). Ein gelöschtes Genre gilt als kein Fokus."""
+    f = _info(con, "fokus")
+    if not f:
+        return None
+    return int(f) if con.execute("SELECT 1 FROM genres WHERE id=?", (int(f),)).fetchone() else None
+
+
+def fokus_setzen(con, genre_id):
+    with con:
+        if genre_id is None:
+            con.execute("DELETE FROM modell_info WHERE schluessel='fokus'")
+        else:
+            _info(con, "fokus", int(genre_id))
 
 
 def cluster_berechnen(con=None, pro_gruppe=150):

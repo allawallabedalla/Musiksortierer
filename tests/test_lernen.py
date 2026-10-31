@@ -504,3 +504,22 @@ def test_zeitverlauf_erst_wenn_fast_alle_bewerteten_ihn_haben(con):
     gemessen = b.Z[b.hat_z].astype(np.float32)
     assert abs(gemessen.mean()) < 1e-2 and not b.Z[~b.hat_z].any()   # standardisiert, Lücken neutral 0
     assert con.execute("SELECT COUNT(*) FROM vorhersagen").fetchone()[0] == len(wahr)
+
+
+def test_fokus_zeigt_nur_lieder_aus_dem_bereich(con):
+    wahr, gids = _wolken(con, n_pro=60)
+    for w in range(3):
+        for lid in [l for l, x in wahr.items() if x == w][:10]:
+            _bewerte(con, lid, gids[w])
+    oben = con.execute("INSERT INTO genres(name) VALUES ('Oben')").lastrowid
+    con.execute("UPDATE genres SET eltern_id=? WHERE id IN (?, ?)", (oben, gids[0], gids[1]))
+    con.commit()
+    lernen.trainieren(con)
+    lernen.fokus_setzen(con, oben)
+    assert lernen.fokus_lesen(con) == oben
+    karten = [k for _ in range(10) for k in lernen.naechste(con, 3)]
+    assert karten and all(k["grund"] != "gruppe" for k in karten)
+    vorh = dict(con.execute("SELECT lied_id, genre_id FROM vorhersagen").fetchall())
+    assert all(vorh[k["lied_id"]] in (gids[0], gids[1]) for k in karten)
+    lernen.fokus_setzen(con, None)
+    assert lernen.fokus_lesen(con) is None
